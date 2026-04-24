@@ -15,7 +15,7 @@ namespace MqttViewer.ViewModels;
 
 public sealed class MainWindowViewModel : ObservableObject, IDisposable
 {
-    private static readonly string[] KnownVdaGroups = ["order", "state", "instantActions", "connection", "visualization", "factsheet"];
+    private static readonly string[] KnownVdaGroups = ["order", "state", "instantActions", "connection", "visualization", "factsheet", "zoneSet", "responses"];
 
     private readonly IMqttMonitorService _mqttMonitorService;
     private readonly Dispatcher _dispatcher;
@@ -739,6 +739,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         topicSummary.LastReceivedAt = message.ReceivedAt;
         topicSummary.VdaGroupName = GuessVdaGroup(message.TopicName);
         topicSummary.VehicleKey = GuessVehicleKey(message.TopicName);
+        ApplyTopicDirectionMetadata(topicSummary, message.TopicName);
 
         if (highlightTopic)
         {
@@ -1187,6 +1188,24 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         return segments.Length >= 2 ? $"{segments[^2]}/{segments[^1]}" : "unknown";
     }
 
+    private static void ApplyTopicDirectionMetadata(TopicSummary topicSummary, string topicName)
+    {
+        var vdaGroup = GuessVdaGroup(topicName);
+
+        (topicSummary.PublisherLabel, topicSummary.DirectionLabel) = vdaGroup switch
+        {
+            "order" => ("FMS", "FMS → Robot"),
+            "instantActions" => ("FMS", "FMS → Robot"),
+            "zoneSet" => ("FMS", "FMS → Robot"),
+            "responses" => ("FMS", "FMS → Robot"),
+            "state" => ("Robot", "Robot → FMS"),
+            "factsheet" => ("Robot", "Robot → FMS"),
+            "visualization" => ("Robot", "Robot → Viewer"),
+            "connection" => ("Broker/Robot", "Broker/Robot → FMS"),
+            _ => ("Unknown", "Unknown")
+        };
+    }
+
     private void ClearAllMessages()
     {
         ResetLoadedData();
@@ -1218,6 +1237,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             topicSummary.LastReceivedAt = null;
             topicSummary.VehicleKey = GuessVehicleKey(topicName);
             topicSummary.VdaGroupName = GuessVdaGroup(topicName);
+            ApplyTopicDirectionMetadata(topicSummary, topicName);
         }
 
         if (_highlightByTopic.Remove(topicName, out var tokenSource))

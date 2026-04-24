@@ -10,6 +10,8 @@ public sealed class TopicSummary : ObservableObject
     private bool _isHighlighted;
     private string? _vdaGroupName;
     private string? _vehicleKey;
+    private string? _publisherLabel;
+    private string? _directionLabel;
 
     public string TopicName
     {
@@ -45,5 +47,17 @@ public sealed class TopicSummary : ObservableObject
     {
         get => _vehicleKey;
         set => SetProperty(ref _vehicleKey, value);
+    }
+
+    public string? PublisherLabel
+    {
+        get => _publisherLabel;
+        set => SetProperty(ref _publisherLabel, value);
+    }
+
+    public string? DirectionLabel
+    {
+        get => _directionLabel;
+        set => SetProperty(ref _directionLabel, value);
     }
 }
