@@ -372,3 +372,6 @@ MQTTViewer-20*/
 *.ps1
 *.psm1
 *.psd1
+
+# Command scripts
+*.cmd

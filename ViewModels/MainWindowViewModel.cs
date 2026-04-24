@@ -1,0 +1,1574 @@
+using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.IO;
+using System.Text;
+using System.Text.Json;
+using System.Windows;
+using System.Windows.Data;
+using System.Windows.Threading;
+using Microsoft.Win32;
+using MqttViewer.Infrastructure;
+using MqttViewer.Models;
+using MqttViewer.Services;
+
+namespace MqttViewer.ViewModels;
+
+public sealed class MainWindowViewModel : ObservableObject, IDisposable
+{
+    private static readonly string[] KnownVdaGroups = ["order", "state", "instantActions", "connection", "visualization", "factsheet"];
+
+    private readonly IMqttMonitorService _mqttMonitorService;
+    private readonly Dispatcher _dispatcher;
+    private readonly Dictionary<string, List<ReceivedMessage>> _messagesByTopic = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, TopicSummary> _topicByName = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, CancellationTokenSource> _highlightByTopic = new(StringComparer.Ordinal);
+    private readonly List<JsonTreeNode> _rawJsonTreeNodes = [];
+
+    private TopicSummary? _selectedTopic;
+    private ReceivedMessage? _selectedMessage;
+    private string _topicSearchText = string.Empty;
+    private string _jsonSearchText = string.Empty;
+    private string _selectedTopicSortMode = "TopicNameAsc";
+    private string _selectedTopicGroupMode = "Vehicle";
+    private string _selectedMessageSortMode = "NewestFirst";
+    private string _selectedExportScope = "AllTopics";
+    private ConnectionStatus _connectionStatus = ConnectionStatus.Disconnected;
+    private string _statusText = string.Empty;
+    private string _sessionSourceText = string.Empty;
+    private string _selectedMessageDiffSummary = string.Empty;
+    private bool _isImportedSession;
+    private long _totalReceivedCount;
+    private DateTime? _lastReceivedAt;
+    private string _selectedLanguageCode;
+
+    private AppLocalizer LocalizerCore => AppLocalizer.Instance;
+
+    public MainWindowViewModel(IMqttMonitorService mqttMonitorService)
+    {
+        _mqttMonitorService = mqttMonitorService;
+        _dispatcher = Application.Current.Dispatcher;
+        _selectedLanguageCode = LocalizerCore.CurrentLanguageCode;
+
+        ConnectionSettings = new ConnectionSettings();
+        Localizer = LocalizerCore;
+
+        Topics = new ObservableCollection<TopicSummary>();
+        TopicsView = CollectionViewSource.GetDefaultView(Topics);
+        TopicsView.Filter = TopicFilterPredicate;
+        ApplyTopicGroupingAndSorting();
+
+        CurrentTopicMessages = new ObservableCollection<ReceivedMessage>();
+        MessagesView = CollectionViewSource.GetDefaultView(CurrentTopicMessages);
+        ApplyMessageSorting();
+
+        LanguageOptions = new ObservableCollection<SelectionOption>
+        {
+            new("en", "LanguageEnglish"),
+            new("ko", "LanguageKorean")
+        };
+        TopicSortModes = new ObservableCollection<SelectionOption>
+        {
+            new("RecentFirst", "SortRecentFirst"),
+            new("TopicNameAsc", "SortTopicNameAsc")
+        };
+        TopicGroupModes = new ObservableCollection<SelectionOption>
+        {
+            new("None", "GroupNone"),
+            new("Vda5050Group", "GroupVda5050"),
+            new("Vehicle", "GroupVehicle")
+        };
+        MessageSortModes = new ObservableCollection<SelectionOption>
+        {
+            new("NewestFirst", "SortNewestFirst"),
+            new("OldestFirst", "SortOldestFirst")
+        };
+        ExportScopes = new ObservableCollection<SelectionOption>
+        {
+            new("SelectedMessage", "ExportSelectedMessage"),
+            new("SelectedTopic", "ExportSelectedTopic"),
+            new("AllTopics", "ExportAllTopics")
+        };
+        JsonTreeNodes = new ObservableCollection<JsonTreeNode>();
+        SelectedMessageDiffLines = new ObservableCollection<DiffLine>();
+
+        ConnectCommand = new AsyncRelayCommand(ConnectAsync, CanConnect);
+        DisconnectCommand = new AsyncRelayCommand(DisconnectAsync, CanDisconnect);
+        SwitchToImportedSessionCommand = new AsyncRelayCommand(SwitchToImportedSessionAsync);
+        ImportCommand = new AsyncRelayCommand(ImportAsync, CanImport);
+        StartLiveSessionCommand = new RelayCommand(StartLiveSession);
+        ClearAllCommand = new RelayCommand(ClearAllMessages, () => TotalReceivedCount > 0);
+        ClearSelectedTopicCommand = new RelayCommand(ClearSelectedTopicMessages, () => SelectedTopic is not null);
+        ClearSelectedMessageCommand = new RelayCommand(ClearSelectedMessage, () => SelectedMessage is not null);
+        ExportCommand = new AsyncRelayCommand(ExportAsync, CanExport);
+        CopyRawCommand = new RelayCommand(CopyRawPayload, () => SelectedMessage is not null);
+        CopyPrettyCommand = new RelayCommand(CopyPrettyPayload, () => SelectedMessage is not null);
+        CopyFullCommand = new RelayCommand(CopyMessageWithMetadata, () => SelectedMessage is not null);
+        CollapseJsonTreeToRootCommand = new RelayCommand(CollapseJsonTreeToRoot, CanManipulateJsonTree);
+        ExpandJsonTreeCommand = new RelayCommand(ExpandJsonTree, CanManipulateJsonTree);
+
+        _mqttMonitorService.ConnectionStatusChanged += OnConnectionStatusChanged;
+        _mqttMonitorService.ConnectionErrorOccurred += OnConnectionErrorOccurred;
+        _mqttMonitorService.MessageReceived += OnMessageReceived;
+        Localizer.PropertyChanged += OnLocalizerPropertyChanged;
+
+        SessionSourceText = T("NoBrokerConnected");
+        StatusText = T("StatusDisconnected");
+        SelectedMessageDiffSummary = T("StatusNoMessageSelected");
+    }
+
+    public AppLocalizer Localizer { get; }
+
+    public ConnectionSettings ConnectionSettings { get; }
+
+    public ObservableCollection<TopicSummary> Topics { get; }
+
+    public ICollectionView TopicsView { get; }
+
+    public ObservableCollection<ReceivedMessage> CurrentTopicMessages { get; }
+
+    public ICollectionView MessagesView { get; }
+
+    public ObservableCollection<SelectionOption> LanguageOptions { get; }
+
+    public ObservableCollection<SelectionOption> TopicSortModes { get; }
+
+    public ObservableCollection<SelectionOption> TopicGroupModes { get; }
+
+    public ObservableCollection<SelectionOption> MessageSortModes { get; }
+
+    public ObservableCollection<SelectionOption> ExportScopes { get; }
+
+    public ObservableCollection<JsonTreeNode> JsonTreeNodes { get; }
+
+    public ObservableCollection<DiffLine> SelectedMessageDiffLines { get; }
+
+    public TopicSummary? SelectedTopic
+    {
+        get => _selectedTopic;
+        set
+        {
+            if (!SetProperty(ref _selectedTopic, value))
+            {
+                return;
+            }
+
+            RebuildCurrentTopicMessages();
+            OnPropertyChanged(nameof(SelectedTopicMessageCount));
+            OnPropertyChanged(nameof(SelectedTopicMessageCountText));
+            OnPropertyChanged(nameof(SelectedTopicDisplayText));
+            UpdateCommandState();
+        }
+    }
+
+    public ReceivedMessage? SelectedMessage
+    {
+        get => _selectedMessage;
+        set
+        {
+            if (!SetProperty(ref _selectedMessage, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(SelectedMessageRawText));
+            OnPropertyChanged(nameof(SelectedMessagePrettyText));
+            OnPropertyChanged(nameof(SelectedMessageJsonStatus));
+            RebuildJsonTree();
+            RebuildSelectedMessageDiff();
+            UpdateCommandState();
+        }
+    }
+
+    public string TopicSearchText
+    {
+        get => _topicSearchText;
+        set
+        {
+            if (!SetProperty(ref _topicSearchText, value))
+            {
+                return;
+            }
+
+            TopicsView.Refresh();
+        }
+    }
+
+    public string JsonSearchText
+    {
+        get => _jsonSearchText;
+        set
+        {
+            if (!SetProperty(ref _jsonSearchText, value))
+            {
+                return;
+            }
+
+            ApplyJsonTreeFilter();
+        }
+    }
+
+    public string SelectedTopicSortMode
+    {
+        get => _selectedTopicSortMode;
+        set
+        {
+            if (!SetProperty(ref _selectedTopicSortMode, value))
+            {
+                return;
+            }
+
+            ApplyTopicGroupingAndSorting();
+        }
+    }
+
+    public string SelectedTopicGroupMode
+    {
+        get => _selectedTopicGroupMode;
+        set
+        {
+            if (!SetProperty(ref _selectedTopicGroupMode, value))
+            {
+                return;
+            }
+
+            ApplyTopicGroupingAndSorting();
+        }
+    }
+
+    public string SelectedMessageSortMode
+    {
+        get => _selectedMessageSortMode;
+        set
+        {
+            if (!SetProperty(ref _selectedMessageSortMode, value))
+            {
+                return;
+            }
+
+            ApplyMessageSorting();
+        }
+    }
+
+    public string SelectedExportScope
+    {
+        get => _selectedExportScope;
+        set => SetProperty(ref _selectedExportScope, value);
+    }
+
+    public string StatusText
+    {
+        get => _statusText;
+        private set => SetProperty(ref _statusText, value);
+    }
+
+    public string SelectedLanguageCode
+    {
+        get => _selectedLanguageCode;
+        set
+        {
+            if (!SetProperty(ref _selectedLanguageCode, value))
+            {
+                return;
+            }
+
+            Localizer.CurrentLanguageCode = value;
+        }
+    }
+
+    public bool IsDarkMode
+    {
+        get => AppThemeManager.Instance.IsDarkMode;
+        set
+        {
+            if (AppThemeManager.Instance.IsDarkMode == value)
+            {
+                return;
+            }
+
+            AppThemeManager.Instance.IsDarkMode = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ThemeModeText));
+        }
+    }
+
+    public string ThemeModeText => IsDarkMode ? Localizer["ThemeDark"] : Localizer["ThemeLight"];
+
+    public string ConnectionStatusText => _connectionStatus switch
+    {
+        ConnectionStatus.Connected => T("ConnectionStatusConnected"),
+        ConnectionStatus.Connecting => T("ConnectionStatusConnecting"),
+        ConnectionStatus.Error => T("ConnectionStatusError"),
+        _ => T("StatusDisconnected")
+    };
+
+    public bool IsConnected => _connectionStatus == ConnectionStatus.Connected;
+
+    public bool IsImportedSession
+    {
+        get => _isImportedSession;
+        private set
+        {
+            if (!SetProperty(ref _isImportedSession, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(SessionModeText));
+            OnPropertyChanged(nameof(SessionModeDescription));
+            OnPropertyChanged(nameof(ModePanelTitleText));
+            OnPropertyChanged(nameof(SessionSourceCaption));
+            OnPropertyChanged(nameof(IsLiveSession));
+            UpdateCommandState();
+        }
+    }
+
+    public bool IsLiveSession => !IsImportedSession;
+
+    public string SessionModeText => IsImportedSession ? Localizer["SessionImported"] : Localizer["SessionLive"];
+
+    public string SessionModeDescription => IsImportedSession
+        ? Localizer["SessionImportedDescription"]
+        : Localizer["SessionLiveDescription"];
+
+    public string ModePanelTitleText => IsImportedSession ? Localizer["ImportedFile"] : Localizer["Connection"];
+
+    public string SessionSourceCaption => IsImportedSession ? Localizer["ImportedFile"] : Localizer["Connection"];
+
+    public string SessionSourceText
+    {
+        get => _sessionSourceText;
+        private set => SetProperty(ref _sessionSourceText, value);
+    }
+
+    public long TotalReceivedCount
+    {
+        get => _totalReceivedCount;
+        private set
+        {
+            if (!SetProperty(ref _totalReceivedCount, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(TotalReceivedCountText));
+        }
+    }
+
+    public DateTime? LastReceivedAt
+    {
+        get => _lastReceivedAt;
+        private set
+        {
+            if (!SetProperty(ref _lastReceivedAt, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(LastReceivedAtText));
+        }
+    }
+
+    public string LastReceivedAtText => LastReceivedAt is null
+        ? $"{Localizer["LastReceivedLabel"]}: -"
+        : $"{Localizer["LastReceivedLabel"]}: {LastReceivedAt:HH:mm:ss.fff}";
+
+    public string TotalReceivedCountText => TF("TotalLabel", TotalReceivedCount);
+
+    public string SelectedTopicMessageCountText => TF("SelectedTopicLabel", SelectedTopicMessageCount);
+
+    public string SelectedMessageDiffSummary
+    {
+        get => _selectedMessageDiffSummary;
+        private set => SetProperty(ref _selectedMessageDiffSummary, value);
+    }
+
+    public int SelectedTopicMessageCount => CurrentTopicMessages.Count;
+
+    public string SelectedTopicDisplayText => SelectedTopic?.TopicName ?? Localizer["NoTopicSelected"];
+
+    public string SelectedMessageRawText => SelectedMessage?.PayloadRaw ?? string.Empty;
+
+    public string SelectedMessagePrettyText
+    {
+        get
+        {
+            if (SelectedMessage is null)
+            {
+                return string.Empty;
+            }
+
+            return SelectedMessage.IsJson
+                ? SelectedMessage.PayloadPrettyJson ?? SelectedMessage.PayloadRaw
+                : SelectedMessage.PayloadRaw;
+        }
+    }
+
+    public string SelectedMessageJsonStatus
+    {
+        get
+        {
+            if (SelectedMessage is null)
+            {
+                return T("StatusNoMessageSelected");
+            }
+
+            return SelectedMessage.IsJson ? T("StatusJsonParsed") : T("StatusInvalidJson");
+        }
+    }
+
+    public AsyncRelayCommand ConnectCommand { get; }
+
+    public AsyncRelayCommand DisconnectCommand { get; }
+
+    public AsyncRelayCommand SwitchToImportedSessionCommand { get; }
+
+    public AsyncRelayCommand ImportCommand { get; }
+
+    public RelayCommand StartLiveSessionCommand { get; }
+
+    public RelayCommand ClearAllCommand { get; }
+
+    public RelayCommand ClearSelectedTopicCommand { get; }
+
+    public RelayCommand ClearSelectedMessageCommand { get; }
+
+    public AsyncRelayCommand ExportCommand { get; }
+
+    public RelayCommand CopyRawCommand { get; }
+
+    public RelayCommand CopyPrettyCommand { get; }
+
+    public RelayCommand CopyFullCommand { get; }
+
+    public RelayCommand CollapseJsonTreeToRootCommand { get; }
+
+    public RelayCommand ExpandJsonTreeCommand { get; }
+
+    private string T(string key) => Localizer[key];
+
+    private string TF(string key, params object[] args) => Localizer.Format(key, args);
+
+    private void OnLocalizerPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != "Item[]")
+        {
+            return;
+        }
+
+        _selectedLanguageCode = Localizer.CurrentLanguageCode;
+        OnPropertyChanged(nameof(SelectedLanguageCode));
+        OnPropertyChanged(nameof(ConnectionStatusText));
+        OnPropertyChanged(nameof(SessionModeText));
+        OnPropertyChanged(nameof(SessionModeDescription));
+        OnPropertyChanged(nameof(ModePanelTitleText));
+        OnPropertyChanged(nameof(SessionSourceCaption));
+        OnPropertyChanged(nameof(ThemeModeText));
+        OnPropertyChanged(nameof(LastReceivedAtText));
+        OnPropertyChanged(nameof(TotalReceivedCountText));
+        OnPropertyChanged(nameof(SelectedTopicMessageCountText));
+        OnPropertyChanged(nameof(SelectedMessageJsonStatus));
+        OnPropertyChanged(nameof(SelectedTopicDisplayText));
+        if (TotalReceivedCount == 0)
+        {
+            SessionSourceText = IsImportedSession ? T("NoFileLoaded") : T("NoBrokerConnected");
+        }
+
+        RebuildSelectedMessageDiff();
+    }
+
+    public void UpdatePassword(string? password)
+    {
+        ConnectionSettings.Password = password;
+    }
+
+    private bool CanConnect() => !IsImportedSession && _connectionStatus is ConnectionStatus.Disconnected or ConnectionStatus.Error;
+
+    private bool CanDisconnect() => !IsImportedSession && _connectionStatus == ConnectionStatus.Connected;
+
+    private bool CanImport() => IsImportedSession && _connectionStatus != ConnectionStatus.Connecting;
+
+    private bool CanExport()
+    {
+        return SelectedExportScope switch
+        {
+            "SelectedMessage" => SelectedMessage is not null,
+            "SelectedTopic" => SelectedTopic is not null && CurrentTopicMessages.Count > 0,
+            _ => TotalReceivedCount > 0
+        };
+    }
+
+    private bool CanManipulateJsonTree() => SelectedMessage?.IsJson == true && _rawJsonTreeNodes.Count > 0;
+
+    private async Task ConnectAsync()
+    {
+        if (IsImportedSession)
+        {
+            StatusText = T("StatusImportedModeActive");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(ConnectionSettings.Host))
+        {
+            StatusText = T("StatusHostRequired");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(ConnectionSettings.TopicFilter))
+        {
+            StatusText = T("StatusTopicFilterRequired");
+            return;
+        }
+
+        try
+        {
+            StatusText = TF("StatusConnecting", ConnectionSettings.Host, ConnectionSettings.Port);
+            await _mqttMonitorService.ConnectAsync(ConnectionSettings);
+            SessionSourceText = $"{ConnectionSettings.Host}:{ConnectionSettings.Port} | {ConnectionSettings.TopicFilter}";
+            StatusText = TF("StatusConnected", ConnectionSettings.TopicFilter);
+        }
+        catch (Exception ex)
+        {
+            StatusText = TF("StatusConnectionFailed", ex.Message);
+        }
+    }
+
+    private async Task DisconnectAsync()
+    {
+        try
+        {
+            await _mqttMonitorService.DisconnectAsync();
+            StatusText = T("StatusDisconnected");
+        }
+        catch (Exception ex)
+        {
+            StatusText = TF("StatusDisconnectFailed", ex.Message);
+        }
+    }
+
+    private async Task ImportAsync()
+    {
+        if (!IsImportedSession)
+        {
+            StatusText = T("StatusSwitchToImportedFirst");
+            return;
+        }
+
+        if (TotalReceivedCount > 0 &&
+            !ConfirmSessionChange(
+                T("DialogReplaceImportedTitle"),
+                T("DialogReplaceImportedMessage")))
+        {
+            StatusText = T("StatusImportCanceled");
+            return;
+        }
+
+        var dialog = new OpenFileDialog
+        {
+            Filter = "Supported files (*.jsonl;*.json;*.txt)|*.jsonl;*.json;*.txt|JSON Lines (*.jsonl)|*.jsonl|JSON (*.json)|*.json|Text (*.txt)|*.txt",
+            Multiselect = false,
+            CheckFileExists = true
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            StatusText = T("StatusNoFileSelected");
+            return;
+        }
+
+        try
+        {
+            if (_mqttMonitorService.IsConnected)
+            {
+                await _mqttMonitorService.DisconnectAsync();
+            }
+
+            var importedMessages = await LoadMessagesFromFileAsync(dialog.FileName);
+
+            ResetLoadedData();
+            IsImportedSession = true;
+            SessionSourceText = Path.GetFileName(dialog.FileName);
+
+            foreach (var message in importedMessages)
+            {
+                AddMessageToSession(message, highlightTopic: false, updateStatus: false);
+            }
+
+            TopicsView.Refresh();
+            SelectedTopic = Topics.FirstOrDefault();
+            StatusText = TF("StatusImportedCount", importedMessages.Count, dialog.FileName);
+            UpdateCommandState();
+        }
+        catch (Exception ex)
+        {
+            StatusText = TF("StatusImportFailed", ex.Message);
+        }
+    }
+
+    private async Task SwitchToImportedSessionAsync()
+    {
+        try
+        {
+            if (IsImportedSession)
+            {
+                StatusText = T("StatusImportedAlreadyActive");
+                return;
+            }
+
+            if ((TotalReceivedCount > 0 || _mqttMonitorService.IsConnected) &&
+                !ConfirmSessionChange(
+                    T("DialogSwitchImportedTitle"),
+                    T("DialogSwitchImportedMessage")))
+            {
+                StatusText = T("StatusSessionModeCanceled");
+                return;
+            }
+
+            if (_mqttMonitorService.IsConnected)
+            {
+                await _mqttMonitorService.DisconnectAsync();
+            }
+
+            ResetLoadedData();
+            IsImportedSession = true;
+            SessionSourceText = T("NoFileLoaded");
+            StatusText = T("StatusImportedReady");
+            UpdateCommandState();
+        }
+        catch (Exception ex)
+        {
+            StatusText = TF("StatusSwitchModeFailed", ex.Message);
+        }
+    }
+
+    private void StartLiveSession()
+    {
+        if (!IsImportedSession)
+        {
+            StatusText = T("StatusLiveAlreadyActive");
+            return;
+        }
+
+        if ((TotalReceivedCount > 0 || _mqttMonitorService.IsConnected) &&
+            !ConfirmSessionChange(
+                T("DialogSwitchLiveTitle"),
+                T("DialogSwitchLiveMessage")))
+        {
+            StatusText = T("StatusSessionModeCanceled");
+            return;
+        }
+
+        ResetLoadedData();
+        IsImportedSession = false;
+        SessionSourceText = T("NoBrokerConnected");
+        StatusText = T("StatusLiveReady");
+        UpdateCommandState();
+    }
+
+    private static bool ConfirmSessionChange(string title, string message)
+    {
+        return MessageBox.Show(
+                   message,
+                   title,
+                   MessageBoxButton.OKCancel,
+                   MessageBoxImage.Warning) == MessageBoxResult.OK;
+    }
+
+    private void OnConnectionStatusChanged(object? sender, ConnectionStatus status)
+    {
+        _dispatcher.Invoke(() =>
+        {
+            _connectionStatus = status;
+            OnPropertyChanged(nameof(ConnectionStatusText));
+            OnPropertyChanged(nameof(IsConnected));
+            UpdateCommandState();
+        });
+    }
+
+    private void OnConnectionErrorOccurred(object? sender, string errorMessage)
+    {
+        _dispatcher.Invoke(() => StatusText = TF("StatusError", errorMessage));
+    }
+
+    private void OnMessageReceived(object? sender, IncomingMqttMessage incoming)
+    {
+        _dispatcher.Invoke(() => AddIncomingMessageCore(incoming));
+    }
+
+    private void AddIncomingMessageCore(IncomingMqttMessage incoming)
+    {
+        var payload = incoming.Payload ?? string.Empty;
+        var (isJson, prettyJson) = TryPrettyJson(payload);
+
+        var message = new ReceivedMessage
+        {
+            TopicName = incoming.Topic ?? string.Empty,
+            ReceivedAt = incoming.ReceivedAt,
+            Qos = incoming.Qos,
+            Retain = incoming.Retain,
+            PayloadSize = Encoding.UTF8.GetByteCount(payload),
+            PayloadRaw = payload,
+            PayloadPrettyJson = prettyJson,
+            IsJson = isJson
+        };
+
+        AddMessageToSession(message, highlightTopic: true, updateStatus: true);
+    }
+
+    private void AddMessageToSession(ReceivedMessage message, bool highlightTopic, bool updateStatus)
+    {
+        if (!_messagesByTopic.TryGetValue(message.TopicName, out var messageList))
+        {
+            messageList = [];
+            _messagesByTopic[message.TopicName] = messageList;
+        }
+
+        messageList.Add(message);
+
+        if (!_topicByName.TryGetValue(message.TopicName, out var topicSummary))
+        {
+            topicSummary = new TopicSummary
+            {
+                TopicName = message.TopicName
+            };
+
+            _topicByName[message.TopicName] = topicSummary;
+            Topics.Add(topicSummary);
+        }
+
+        topicSummary.MessageCount = messageList.Count;
+        topicSummary.LastReceivedAt = message.ReceivedAt;
+        topicSummary.VdaGroupName = GuessVdaGroup(message.TopicName);
+        topicSummary.VehicleKey = GuessVehicleKey(message.TopicName);
+
+        if (highlightTopic)
+        {
+            TriggerTopicHighlight(topicSummary);
+        }
+
+        TotalReceivedCount += 1;
+        LastReceivedAt = message.ReceivedAt;
+
+        if (updateStatus)
+        {
+            StatusText = TF("StatusLastMessage", message.TopicName, message.ReceivedAt);
+        }
+
+        if (SelectedTopic?.TopicName == message.TopicName)
+        {
+            CurrentTopicMessages.Add(message);
+            OnPropertyChanged(nameof(SelectedTopicMessageCount));
+            OnPropertyChanged(nameof(SelectedTopicMessageCountText));
+        }
+
+        TopicsView.Refresh();
+        UpdateCommandState();
+    }
+
+    private static (bool IsJson, string? PrettyJson) TryPrettyJson(string payload)
+    {
+        if (string.IsNullOrWhiteSpace(payload))
+        {
+            return (false, null);
+        }
+
+        try
+        {
+            using var jsonDocument = JsonDocument.Parse(payload);
+            var prettyJson = JsonSerializer.Serialize(jsonDocument.RootElement, new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+            return (true, prettyJson);
+        }
+        catch
+        {
+            return (false, null);
+        }
+    }
+
+    private void RebuildCurrentTopicMessages()
+    {
+        CurrentTopicMessages.Clear();
+        SelectedMessage = null;
+
+        if (SelectedTopic is null || !_messagesByTopic.TryGetValue(SelectedTopic.TopicName, out var messages))
+        {
+            return;
+        }
+
+        foreach (var message in messages)
+        {
+            CurrentTopicMessages.Add(message);
+        }
+
+        OnPropertyChanged(nameof(SelectedTopicMessageCount));
+        OnPropertyChanged(nameof(SelectedTopicMessageCountText));
+        ApplyMessageSorting();
+    }
+
+    private void RebuildJsonTree()
+    {
+        _rawJsonTreeNodes.Clear();
+        JsonTreeNodes.Clear();
+
+        if (SelectedMessage is null || !SelectedMessage.IsJson)
+        {
+            return;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(SelectedMessage.PayloadRaw);
+            _rawJsonTreeNodes.Add(BuildJsonTreeNode("$", document.RootElement));
+            ApplyJsonTreeFilter();
+        }
+        catch
+        {
+            _rawJsonTreeNodes.Clear();
+            JsonTreeNodes.Clear();
+        }
+    }
+
+    private static JsonTreeNode BuildJsonTreeNode(string key, JsonElement element)
+    {
+        var node = new JsonTreeNode
+        {
+            Key = key,
+            IsExpanded = true,
+            ValueKind = element.ValueKind.ToString()
+        };
+
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                node.Value = "{ }";
+                foreach (var property in element.EnumerateObject())
+                {
+                    node.Children.Add(BuildJsonTreeNode(property.Name, property.Value));
+                }
+                break;
+
+            case JsonValueKind.Array:
+                node.Value = $"[{element.GetArrayLength()}]";
+                var index = 0;
+                foreach (var arrayItem in element.EnumerateArray())
+                {
+                    node.Children.Add(BuildJsonTreeNode($"[{index}]", arrayItem));
+                    index++;
+                }
+                break;
+
+            case JsonValueKind.String:
+                node.Value = $"\"{element.GetString()}\"";
+                break;
+
+            case JsonValueKind.Number:
+                node.Value = element.GetRawText();
+                break;
+
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+                node.Value = element.GetBoolean().ToString();
+                break;
+
+            case JsonValueKind.Null:
+                node.Value = "null";
+                break;
+
+            default:
+                node.Value = element.GetRawText();
+                break;
+        }
+
+        return node;
+    }
+
+    private void ApplyJsonTreeFilter()
+    {
+        JsonTreeNodes.Clear();
+
+        if (_rawJsonTreeNodes.Count == 0)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(JsonSearchText))
+        {
+            foreach (var root in _rawJsonTreeNodes)
+            {
+                JsonTreeNodes.Add(root);
+            }
+
+            return;
+        }
+
+        var query = JsonSearchText.Trim();
+        foreach (var root in _rawJsonTreeNodes)
+        {
+            var filteredRoot = FilterSubtree(root, query);
+            if (filteredRoot is not null)
+            {
+                JsonTreeNodes.Add(filteredRoot);
+            }
+        }
+    }
+
+    private static JsonTreeNode CloneSubtree(JsonTreeNode source)
+    {
+        var clone = new JsonTreeNode
+        {
+            Key = source.Key,
+            Value = source.Value,
+            ValueKind = source.ValueKind,
+            IsExpanded = source.IsExpanded,
+            IsMatch = false
+        };
+
+        foreach (var child in source.Children)
+        {
+            clone.Children.Add(CloneSubtree(child));
+        }
+
+        return clone;
+    }
+
+    private static JsonTreeNode? FilterSubtree(JsonTreeNode source, string query)
+    {
+        var isMatch =
+            source.Key.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+            source.Value.Contains(query, StringComparison.OrdinalIgnoreCase);
+
+        var filteredNode = new JsonTreeNode
+        {
+            Key = source.Key,
+            Value = source.Value,
+            ValueKind = source.ValueKind,
+            IsExpanded = true,
+            IsMatch = isMatch
+        };
+
+        foreach (var child in source.Children)
+        {
+            var filteredChild = FilterSubtree(child, query);
+            if (filteredChild is not null)
+            {
+                filteredNode.Children.Add(filteredChild);
+            }
+        }
+
+        return isMatch || filteredNode.Children.Count > 0 ? filteredNode : null;
+    }
+
+    private void CollapseJsonTreeToRoot()
+    {
+        foreach (var root in _rawJsonTreeNodes)
+        {
+            root.IsExpanded = true;
+            foreach (var child in root.Children)
+            {
+                SetJsonTreeExpanded(child, false);
+            }
+        }
+
+        ApplyJsonTreeFilter();
+    }
+
+    private void ExpandJsonTree()
+    {
+        foreach (var root in _rawJsonTreeNodes)
+        {
+            SetJsonTreeExpanded(root, true);
+        }
+
+        ApplyJsonTreeFilter();
+    }
+
+    private static void SetJsonTreeExpanded(JsonTreeNode node, bool isExpanded)
+    {
+        node.IsExpanded = isExpanded;
+        foreach (var child in node.Children)
+        {
+            SetJsonTreeExpanded(child, isExpanded);
+        }
+    }
+
+    private void RebuildSelectedMessageDiff()
+    {
+        SelectedMessageDiffLines.Clear();
+
+        if (SelectedMessage is null)
+        {
+            SelectedMessageDiffSummary = T("StatusNoMessageSelected");
+            return;
+        }
+
+        var previousMessage = FindPreviousMessage(SelectedMessage);
+        if (previousMessage is null)
+        {
+            SelectedMessageDiffSummary = T("DiffNoPrevious");
+            return;
+        }
+
+        var oldText = GetComparablePayload(previousMessage);
+        var newText = GetComparablePayload(SelectedMessage);
+        var diff = LineDiffBuilder.Build(oldText, newText);
+
+        SelectedMessageDiffSummary = TF("DiffCompared", previousMessage.ReceivedAt, diff.Added, diff.Removed, diff.Unchanged);
+
+        foreach (var line in diff.Text.Split(["\r\n", "\n"], StringSplitOptions.None))
+        {
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            SelectedMessageDiffLines.Add(new DiffLine
+            {
+                Kind = line.StartsWith("+ ", StringComparison.Ordinal)
+                    ? "Added"
+                    : line.StartsWith("- ", StringComparison.Ordinal)
+                        ? "Removed"
+                        : "Context",
+                Text = line
+            });
+        }
+    }
+
+    private ReceivedMessage? FindPreviousMessage(ReceivedMessage selectedMessage)
+    {
+        if (!_messagesByTopic.TryGetValue(selectedMessage.TopicName, out var topicMessages) || topicMessages.Count == 0)
+        {
+            return null;
+        }
+
+        var index = topicMessages.FindIndex(message => message.Id == selectedMessage.Id);
+        if (index > 0)
+        {
+            return topicMessages[index - 1];
+        }
+
+        if (index < 0)
+        {
+            return topicMessages
+                .Where(message => message.ReceivedAt < selectedMessage.ReceivedAt)
+                .OrderByDescending(message => message.ReceivedAt)
+                .FirstOrDefault();
+        }
+
+        return null;
+    }
+
+    private static string GetComparablePayload(ReceivedMessage message)
+    {
+        return message.IsJson && !string.IsNullOrWhiteSpace(message.PayloadPrettyJson)
+            ? message.PayloadPrettyJson
+            : message.PayloadRaw;
+    }
+
+    private bool TopicFilterPredicate(object item)
+    {
+        if (item is not TopicSummary topic)
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(TopicSearchText))
+        {
+            return true;
+        }
+
+        return topic.TopicName.Contains(TopicSearchText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void ApplyTopicGroupingAndSorting()
+    {
+        using (TopicsView.DeferRefresh())
+        {
+            TopicsView.GroupDescriptions.Clear();
+            TopicsView.SortDescriptions.Clear();
+
+            if (SelectedTopicGroupMode == "Vda5050Group")
+            {
+                TopicsView.GroupDescriptions.Add(new PropertyGroupDescription(nameof(TopicSummary.VdaGroupName)));
+            }
+            else if (SelectedTopicGroupMode == "Vehicle")
+            {
+                TopicsView.GroupDescriptions.Add(new PropertyGroupDescription(nameof(TopicSummary.VehicleKey)));
+            }
+
+            if (SelectedTopicSortMode == "TopicNameAsc")
+            {
+                TopicsView.SortDescriptions.Add(new SortDescription(nameof(TopicSummary.TopicName), ListSortDirection.Ascending));
+            }
+            else
+            {
+                TopicsView.SortDescriptions.Add(new SortDescription(nameof(TopicSummary.LastReceivedAt), ListSortDirection.Descending));
+            }
+        }
+    }
+
+    private void ApplyMessageSorting()
+    {
+        using (MessagesView.DeferRefresh())
+        {
+            MessagesView.SortDescriptions.Clear();
+            MessagesView.SortDescriptions.Add(
+                new SortDescription(
+                    nameof(ReceivedMessage.ReceivedAt),
+                    SelectedMessageSortMode == "OldestFirst"
+                        ? ListSortDirection.Ascending
+                        : ListSortDirection.Descending));
+        }
+    }
+
+    private void TriggerTopicHighlight(TopicSummary topicSummary)
+    {
+        if (_highlightByTopic.TryGetValue(topicSummary.TopicName, out var previousTokenSource))
+        {
+            previousTokenSource.Cancel();
+            previousTokenSource.Dispose();
+        }
+
+        topicSummary.IsHighlighted = true;
+
+        var tokenSource = new CancellationTokenSource();
+        _highlightByTopic[topicSummary.TopicName] = tokenSource;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(1500), tokenSource.Token);
+                await _dispatcher.InvokeAsync(() => topicSummary.IsHighlighted = false);
+            }
+            catch (TaskCanceledException)
+            {
+            }
+        });
+    }
+
+    private static string GuessVdaGroup(string topic)
+    {
+        foreach (var group in KnownVdaGroups)
+        {
+            if (topic.Contains($"/{group}", StringComparison.OrdinalIgnoreCase) ||
+                topic.EndsWith(group, StringComparison.OrdinalIgnoreCase))
+            {
+                return group;
+            }
+        }
+
+        return "other";
+    }
+
+    private static string GuessVehicleKey(string topic)
+    {
+        var segments = topic.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 2)
+        {
+            return "unknown";
+        }
+
+        var groupIndex = Array.FindIndex(
+            segments,
+            segment => KnownVdaGroups.Contains(segment, StringComparer.OrdinalIgnoreCase));
+
+        if (groupIndex >= 2)
+        {
+            return $"{segments[groupIndex - 2]}/{segments[groupIndex - 1]}";
+        }
+
+        if (segments.Length >= 5 && string.Equals(segments[0], "uagv", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{segments[2]}/{segments[3]}";
+        }
+
+        return segments.Length >= 2 ? $"{segments[^2]}/{segments[^1]}" : "unknown";
+    }
+
+    private void ClearAllMessages()
+    {
+        ResetLoadedData();
+        StatusText = IsImportedSession ? T("StatusClearedImported") : T("StatusClearedAll");
+        UpdateCommandState();
+    }
+
+    private void ClearSelectedTopicMessages()
+    {
+        if (SelectedTopic is null)
+        {
+            return;
+        }
+
+        var topicName = SelectedTopic.TopicName;
+        if (_messagesByTopic.TryGetValue(topicName, out var removedMessages))
+        {
+            TotalReceivedCount = Math.Max(0, TotalReceivedCount - removedMessages.Count);
+            removedMessages.Clear();
+        }
+        else
+        {
+            _messagesByTopic[topicName] = [];
+        }
+
+        if (_topicByName.TryGetValue(topicName, out var topicSummary))
+        {
+            topicSummary.MessageCount = 0;
+            topicSummary.LastReceivedAt = null;
+            topicSummary.VehicleKey = GuessVehicleKey(topicName);
+            topicSummary.VdaGroupName = GuessVdaGroup(topicName);
+        }
+
+        if (_highlightByTopic.Remove(topicName, out var tokenSource))
+        {
+            tokenSource.Cancel();
+            tokenSource.Dispose();
+        }
+
+        CurrentTopicMessages.Clear();
+        SelectedMessage = null;
+        SelectedMessageDiffLines.Clear();
+        SelectedMessageDiffSummary = T("StatusNoMessageSelected");
+        RecalculateLastReceivedAt();
+        TopicsView.Refresh();
+        OnPropertyChanged(nameof(SelectedTopicMessageCount));
+        OnPropertyChanged(nameof(SelectedTopicMessageCountText));
+        StatusText = TF("StatusClearedTopic", topicName);
+        UpdateCommandState();
+    }
+
+    private void ClearSelectedMessage()
+    {
+        if (SelectedMessage is null || !_messagesByTopic.TryGetValue(SelectedMessage.TopicName, out var topicMessages))
+        {
+            return;
+        }
+
+        var selectedMessage = SelectedMessage;
+        var removed = topicMessages.Remove(selectedMessage);
+        if (!removed)
+        {
+            var existing = topicMessages.FirstOrDefault(message => message.Id == selectedMessage.Id);
+            if (existing is not null)
+            {
+                removed = topicMessages.Remove(existing);
+            }
+        }
+
+        if (!removed)
+        {
+            return;
+        }
+
+        TotalReceivedCount = Math.Max(0, TotalReceivedCount - 1);
+
+        if (SelectedTopic?.TopicName == selectedMessage.TopicName)
+        {
+            CurrentTopicMessages.Remove(selectedMessage);
+            OnPropertyChanged(nameof(SelectedTopicMessageCount));
+            OnPropertyChanged(nameof(SelectedTopicMessageCountText));
+        }
+
+        if (_topicByName.TryGetValue(selectedMessage.TopicName, out var topicSummary))
+        {
+            if (topicMessages.Count == 0)
+            {
+                if (SelectedTopic?.TopicName == selectedMessage.TopicName)
+                {
+                    topicSummary.MessageCount = 0;
+                    topicSummary.LastReceivedAt = null;
+                }
+                else
+                {
+                    _messagesByTopic.Remove(selectedMessage.TopicName);
+                    _topicByName.Remove(selectedMessage.TopicName);
+                    Topics.Remove(topicSummary);
+
+                    if (_highlightByTopic.Remove(selectedMessage.TopicName, out var tokenSource))
+                    {
+                        tokenSource.Cancel();
+                        tokenSource.Dispose();
+                    }
+                }
+            }
+            else
+            {
+                topicSummary.MessageCount = topicMessages.Count;
+                topicSummary.LastReceivedAt = topicMessages[^1].ReceivedAt;
+            }
+        }
+
+        SelectedMessage = null;
+        SelectedMessageDiffLines.Clear();
+        SelectedMessageDiffSummary = T("StatusNoMessageSelected");
+        RecalculateLastReceivedAt();
+        TopicsView.Refresh();
+        StatusText = T("StatusClearedMessage");
+        UpdateCommandState();
+    }
+
+    private void ResetLoadedData()
+    {
+        foreach (var tokenSource in _highlightByTopic.Values)
+        {
+            tokenSource.Cancel();
+            tokenSource.Dispose();
+        }
+
+        _highlightByTopic.Clear();
+        _messagesByTopic.Clear();
+        _topicByName.Clear();
+        Topics.Clear();
+        CurrentTopicMessages.Clear();
+        JsonTreeNodes.Clear();
+        _rawJsonTreeNodes.Clear();
+        SelectedMessageDiffLines.Clear();
+        SelectedTopic = null;
+        SelectedMessage = null;
+        SelectedMessageDiffSummary = T("StatusNoMessageSelected");
+        TotalReceivedCount = 0;
+        LastReceivedAt = null;
+    }
+
+    private static async Task<List<ReceivedMessage>> LoadMessagesFromFileAsync(string filePath)
+    {
+        var extension = Path.GetExtension(filePath).ToLowerInvariant();
+        return extension switch
+        {
+            ".jsonl" => await LoadJsonLinesAsync(filePath),
+            ".json" => await LoadJsonAsync(filePath),
+            ".txt" => await LoadTextExportAsync(filePath),
+            _ => throw new InvalidOperationException("Unsupported import format.")
+        };
+    }
+
+    private static async Task<List<ReceivedMessage>> LoadJsonLinesAsync(string filePath)
+    {
+        var messages = new List<ReceivedMessage>();
+        var lines = await File.ReadAllLinesAsync(filePath, Encoding.UTF8);
+
+        foreach (var line in lines.Where(line => !string.IsNullOrWhiteSpace(line)))
+        {
+            var message = JsonSerializer.Deserialize<ReceivedMessage>(line);
+            if (message is not null)
+            {
+                messages.Add(NormalizeImportedMessage(message));
+            }
+        }
+
+        return messages;
+    }
+
+    private static async Task<List<ReceivedMessage>> LoadJsonAsync(string filePath)
+    {
+        var text = await File.ReadAllTextAsync(filePath, Encoding.UTF8);
+        var messages = JsonSerializer.Deserialize<List<ReceivedMessage>>(text) ?? [];
+        return messages.Select(NormalizeImportedMessage).ToList();
+    }
+
+    private static async Task<List<ReceivedMessage>> LoadTextExportAsync(string filePath)
+    {
+        var text = await File.ReadAllTextAsync(filePath, Encoding.UTF8);
+        var separator = $"{Environment.NewLine}{new string('-', 80)}{Environment.NewLine}";
+        var blocks = text.Split(separator, StringSplitOptions.RemoveEmptyEntries);
+        var messages = new List<ReceivedMessage>();
+
+        foreach (var block in blocks)
+        {
+            var lines = block.Replace("\r\n", "\n").Split('\n');
+            if (lines.Length == 0)
+            {
+                continue;
+            }
+
+            var headerParts = lines[0].Split(" | ", StringSplitOptions.None);
+            if (headerParts.Length < 4)
+            {
+                continue;
+            }
+
+            var qosText = headerParts[2].Replace("QoS=", string.Empty, StringComparison.OrdinalIgnoreCase);
+            var retainText = headerParts[3].Replace("Retain=", string.Empty, StringComparison.OrdinalIgnoreCase);
+
+            var rawMessage = new ReceivedMessage
+            {
+                ReceivedAt = DateTime.TryParse(headerParts[0], out var receivedAt) ? receivedAt : DateTime.Now,
+                TopicName = headerParts[1],
+                Qos = int.TryParse(qosText, out var qos) ? qos : 0,
+                Retain = bool.TryParse(retainText, out var retain) && retain,
+                PayloadRaw = string.Join(Environment.NewLine, lines.Skip(1))
+            };
+
+            messages.Add(NormalizeImportedMessage(rawMessage));
+        }
+
+        return messages;
+    }
+
+    private static ReceivedMessage NormalizeImportedMessage(ReceivedMessage message)
+    {
+        var payload = message.PayloadRaw ?? string.Empty;
+        var (isJson, prettyJson) = TryPrettyJson(payload);
+
+        return new ReceivedMessage
+        {
+            Id = message.Id == Guid.Empty ? Guid.NewGuid() : message.Id,
+            TopicName = message.TopicName ?? string.Empty,
+            ReceivedAt = message.ReceivedAt == default ? DateTime.Now : message.ReceivedAt,
+            Qos = message.Qos,
+            Retain = message.Retain,
+            PayloadSize = Encoding.UTF8.GetByteCount(payload),
+            PayloadRaw = payload,
+            PayloadPrettyJson = prettyJson ?? message.PayloadPrettyJson,
+            IsJson = isJson
+        };
+    }
+
+    private void RecalculateLastReceivedAt()
+    {
+        LastReceivedAt = _messagesByTopic.Values
+            .SelectMany(messages => messages)
+            .Select(message => (DateTime?)message.ReceivedAt)
+            .Max();
+    }
+
+    private void CopyRawPayload()
+    {
+        if (SelectedMessage is null)
+        {
+            return;
+        }
+
+        Clipboard.SetText(SelectedMessage.PayloadRaw);
+        StatusText = T("StatusRawCopied");
+    }
+
+    private void CopyPrettyPayload()
+    {
+        if (SelectedMessage is null)
+        {
+            return;
+        }
+
+        Clipboard.SetText(SelectedMessagePrettyText);
+        StatusText = T("StatusPrettyCopied");
+    }
+
+    private void CopyMessageWithMetadata()
+    {
+        if (SelectedMessage is null)
+        {
+            return;
+        }
+
+        var text = string.Join(Environment.NewLine, new[]
+        {
+            $"Topic: {SelectedMessage.TopicName}",
+            $"ReceivedAt: {SelectedMessage.ReceivedAt:yyyy-MM-dd HH:mm:ss.fff}",
+            $"QoS: {SelectedMessage.Qos}",
+            $"Retain: {SelectedMessage.Retain}",
+            $"PayloadSize: {SelectedMessage.PayloadSize}",
+            "Payload:",
+            SelectedMessage.PayloadRaw
+        });
+
+        Clipboard.SetText(text);
+        StatusText = T("StatusFullCopied");
+    }
+
+    private async Task ExportAsync()
+    {
+        var messages = GetMessagesForExport().ToList();
+        if (messages.Count == 0)
+        {
+            StatusText = T("StatusNoMessagesToExport");
+            return;
+        }
+
+        var dialog = new SaveFileDialog
+        {
+            Filter = "JSON Lines (*.jsonl)|*.jsonl|JSON (*.json)|*.json|Text (*.txt)|*.txt",
+            FileName = $"mqtt-export-{DateTime.Now:yyyyMMdd-HHmmss}.jsonl",
+            AddExtension = true,
+            OverwritePrompt = true
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        var extension = Path.GetExtension(dialog.FileName).ToLowerInvariant();
+        if (extension == ".json")
+        {
+            var json = JsonSerializer.Serialize(messages, new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+            await File.WriteAllTextAsync(dialog.FileName, json, Encoding.UTF8);
+        }
+        else if (extension == ".txt")
+        {
+            var text = string.Join(
+                $"{Environment.NewLine}{new string('-', 80)}{Environment.NewLine}",
+                messages.Select(message =>
+                    $"{message.ReceivedAt:yyyy-MM-dd HH:mm:ss.fff} | {message.TopicName} | QoS={message.Qos} | Retain={message.Retain}{Environment.NewLine}{message.PayloadRaw}"));
+
+            await File.WriteAllTextAsync(dialog.FileName, text, Encoding.UTF8);
+        }
+        else
+        {
+            var lines = messages.Select(message => JsonSerializer.Serialize(message));
+            await File.WriteAllLinesAsync(dialog.FileName, lines, Encoding.UTF8);
+        }
+
+        StatusText = TF("StatusExported", messages.Count, dialog.FileName);
+    }
+
+    private IEnumerable<ReceivedMessage> GetMessagesForExport()
+    {
+        return SelectedExportScope switch
+        {
+            "SelectedMessage" when SelectedMessage is not null => [SelectedMessage],
+            "SelectedTopic" when SelectedTopic is not null && _messagesByTopic.TryGetValue(SelectedTopic.TopicName, out var topicMessages) => topicMessages,
+            _ => _messagesByTopic.Values.SelectMany(messages => messages).OrderBy(message => message.ReceivedAt)
+        };
+    }
+
+    private void UpdateCommandState()
+    {
+        ConnectCommand.RaiseCanExecuteChanged();
+        DisconnectCommand.RaiseCanExecuteChanged();
+        SwitchToImportedSessionCommand.RaiseCanExecuteChanged();
+        ImportCommand.RaiseCanExecuteChanged();
+        StartLiveSessionCommand.RaiseCanExecuteChanged();
+        ClearAllCommand.RaiseCanExecuteChanged();
+        ClearSelectedTopicCommand.RaiseCanExecuteChanged();
+        ClearSelectedMessageCommand.RaiseCanExecuteChanged();
+        ExportCommand.RaiseCanExecuteChanged();
+        CopyRawCommand.RaiseCanExecuteChanged();
+        CopyPrettyCommand.RaiseCanExecuteChanged();
+        CopyFullCommand.RaiseCanExecuteChanged();
+        CollapseJsonTreeToRootCommand.RaiseCanExecuteChanged();
+        ExpandJsonTreeCommand.RaiseCanExecuteChanged();
+    }
+
+    public void Dispose()
+    {
+        Localizer.PropertyChanged -= OnLocalizerPropertyChanged;
+        _mqttMonitorService.ConnectionStatusChanged -= OnConnectionStatusChanged;
+        _mqttMonitorService.ConnectionErrorOccurred -= OnConnectionErrorOccurred;
+        _mqttMonitorService.MessageReceived -= OnMessageReceived;
+
+        foreach (var tokenSource in _highlightByTopic.Values)
+        {
+            tokenSource.Cancel();
+            tokenSource.Dispose();
+        }
+
+        _highlightByTopic.Clear();
+        _mqttMonitorService.Dispose();
+    }
+}

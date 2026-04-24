@@ -1,0 +1,1341 @@
+<Window x:Class="MqttViewer.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+        xmlns:models="clr-namespace:MqttViewer.Models"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="{Binding Localizer[AppTitle]}"
+        Width="1760"
+        Height="1080"
+        MinWidth="1400"
+        MinHeight="860"
+        Background="{DynamicResource MaterialDesignPaper}"
+        Style="{StaticResource MaterialDesignWindow}">
+    <Window.Resources>
+        <Style x:Key="JsonTreeExpanderToggleStyle" TargetType="{x:Type ToggleButton}">
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Width" Value="12" />
+            <Setter Property="Height" Value="12" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ToggleButton}">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="0">
+                            <Path x:Name="Arrow"
+                                  HorizontalAlignment="Center"
+                                  VerticalAlignment="Center"
+                                  Data="M 1 1 L 1 11 L 9 6 Z"
+                                  Fill="#475569"
+                                  Stretch="Uniform" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Arrow" Property="Data" Value="M 1 3 L 11 3 L 6 10 Z" />
+                            </Trigger>
+                            <DataTrigger Binding="{Binding DataContext.IsDarkMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                                <Setter TargetName="Arrow" Property="Fill" Value="#E5E7EB" />
+                            </DataTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="JsonTreeItemContainerStyle" TargetType="{x:Type TreeViewItem}">
+            <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type TreeViewItem}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <ToggleButton x:Name="Expander"
+                                          Grid.Row="0"
+                                          Grid.Column="0"
+                                          Margin="0,3,4,0"
+                                          VerticalAlignment="Top"
+                                          ClickMode="Press"
+                                          IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}}"
+                                          Style="{StaticResource JsonTreeExpanderToggleStyle}" />
+
+                            <Border Grid.Row="0"
+                                    Grid.Column="1"
+                                    Background="Transparent">
+                                <ContentPresenter ContentSource="Header" />
+                            </Border>
+
+                            <ItemsPresenter x:Name="ItemsHost"
+                                            Grid.Row="1"
+                                            Grid.Column="1"
+                                            Margin="16,2,0,0" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsExpanded" Value="False">
+                                <Setter TargetName="ItemsHost" Property="Visibility" Value="Collapsed" />
+                            </Trigger>
+                            <Trigger Property="HasItems" Value="False">
+                                <Setter TargetName="Expander" Property="Visibility" Value="Hidden" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="JsonTreeTextBoxBaseStyle" TargetType="{x:Type TextBox}">
+            <Setter Property="IsReadOnly" Value="True" />
+            <Setter Property="IsReadOnlyCaretVisible" Value="True" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="MinWidth" Value="0" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="JsonTreeKeyStyle" TargetType="{x:Type TextBox}" BasedOn="{StaticResource JsonTreeTextBoxBaseStyle}">
+            <Setter Property="Foreground" Value="#1E40AF" />
+            <Setter Property="Padding" Value="2,1" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding DataContext.IsDarkMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                    <Setter Property="Foreground" Value="#93C5FD" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsMatch}" Value="True">
+                    <Setter Property="Background" Value="#FFFDE68A" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="JsonTreeSeparatorStyle" TargetType="{x:Type TextBox}" BasedOn="{StaticResource JsonTreeTextBoxBaseStyle}">
+            <Setter Property="Foreground" Value="#334155" />
+            <Setter Property="Padding" Value="0" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding DataContext.IsDarkMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                    <Setter Property="Foreground" Value="#E5E7EB" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="JsonTreeValueStyle" TargetType="{x:Type TextBox}" BasedOn="{StaticResource JsonTreeTextBoxBaseStyle}">
+            <Setter Property="Foreground" Value="#111827" />
+            <Setter Property="Padding" Value="2,1" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding DataContext.IsDarkMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                    <Setter Property="Foreground" Value="#F3F4F6" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ValueKind}" Value="String">
+                    <Setter Property="Foreground" Value="#166534" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ValueKind}" Value="Number">
+                    <Setter Property="Foreground" Value="#C2410C" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ValueKind}" Value="True">
+                    <Setter Property="Foreground" Value="#7C3AED" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ValueKind}" Value="False">
+                    <Setter Property="Foreground" Value="#7C3AED" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ValueKind}" Value="Null">
+                    <Setter Property="Foreground" Value="#6B7280" />
+                    <Setter Property="FontStyle" Value="Italic" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ValueKind}" Value="Object">
+                    <Setter Property="Foreground" Value="#0F766E" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding ValueKind}" Value="Array">
+                    <Setter Property="Foreground" Value="#0F766E" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                </DataTrigger>
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding DataContext.IsDarkMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True" />
+                        <Condition Binding="{Binding ValueKind}" Value="String" />
+                    </MultiDataTrigger.Conditions>
+                    <Setter Property="Foreground" Value="#86EFAC" />
+                </MultiDataTrigger>
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding DataContext.IsDarkMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True" />
+                        <Condition Binding="{Binding ValueKind}" Value="Number" />
+                    </MultiDataTrigger.Conditions>
+                    <Setter Property="Foreground" Value="#FDBA74" />
+                </MultiDataTrigger>
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding DataContext.IsDarkMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True" />
+                        <Condition Binding="{Binding ValueKind}" Value="True" />
+                    </MultiDataTrigger.Conditions>
+                    <Setter Property="Foreground" Value="#C4B5FD" />
+                </MultiDataTrigger>
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding DataContext.IsDarkMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True" />
+                        <Condition Binding="{Binding ValueKind}" Value="False" />
+                    </MultiDataTrigger.Conditions>
+                    <Setter Property="Foreground" Value="#C4B5FD" />
+                </MultiDataTrigger>
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding DataContext.IsDarkMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True" />
+                        <Condition Binding="{Binding ValueKind}" Value="Null" />
+                    </MultiDataTrigger.Conditions>
+                    <Setter Property="Foreground" Value="#9CA3AF" />
+                </MultiDataTrigger>
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding DataContext.IsDarkMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True" />
+                        <Condition Binding="{Binding ValueKind}" Value="Object" />
+                    </MultiDataTrigger.Conditions>
+                    <Setter Property="Foreground" Value="#5EEAD4" />
+                </MultiDataTrigger>
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding DataContext.IsDarkMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True" />
+                        <Condition Binding="{Binding ValueKind}" Value="Array" />
+                    </MultiDataTrigger.Conditions>
+                    <Setter Property="Foreground" Value="#5EEAD4" />
+                </MultiDataTrigger>
+                <DataTrigger Binding="{Binding IsMatch}" Value="True">
+                    <Setter Property="Background" Value="#FFFDE68A" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="TopicListViewItemStyle" TargetType="{x:Type ListViewItem}">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Margin" Value="0,0,0,6" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Background">
+                <Setter.Value>
+                    <SolidColorBrush Color="Transparent" />
+                </Setter.Value>
+            </Setter>
+            <Setter Property="BorderBrush" Value="#00000000" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ListViewItem}">
+                        <Grid>
+                            <Border x:Name="SelectionBar"
+                                    Width="5"
+                                    Margin="0,6,0,6"
+                                    HorizontalAlignment="Left"
+                                    Background="#1D4ED8"
+                                    CornerRadius="999"
+                                    Visibility="Collapsed" />
+                            <Border x:Name="ItemBorder"
+                                    Margin="10,0,0,0"
+                                    Padding="6"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="12">
+                                <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                  VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+                            </Border>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="SelectionBar" Property="Visibility" Value="Visible" />
+                                <Setter TargetName="ItemBorder" Property="BorderThickness" Value="2" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#E0EBFF" />
+                    <Setter Property="BorderBrush" Value="#1D4ED8" />
+                </Trigger>
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding RelativeSource={RelativeSource Self}, Path=IsSelected}" Value="True" />
+                        <Condition Binding="{Binding DataContext.IsDarkMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True" />
+                    </MultiDataTrigger.Conditions>
+                    <Setter Property="Background" Value="#1E3A5F" />
+                    <Setter Property="BorderBrush" Value="#93C5FD" />
+                </MultiDataTrigger>
+                <DataTrigger Binding="{Binding IsHighlighted}" Value="True">
+                    <DataTrigger.EnterActions>
+                        <BeginStoryboard>
+                            <Storyboard FillBehavior="Stop">
+                                <ColorAnimationUsingKeyFrames Storyboard.TargetProperty="(Background).(SolidColorBrush.Color)">
+                                    <DiscreteColorKeyFrame KeyTime="0:0:0" Value="#FFBBDEFB" />
+                                    <LinearColorKeyFrame KeyTime="0:0:1.4" Value="#00BBDEFB" />
+                                </ColorAnimationUsingKeyFrames>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </DataTrigger.EnterActions>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="SessionModeButtonStyle"
+               TargetType="{x:Type Button}"
+               BasedOn="{StaticResource MaterialDesignOutlinedButton}">
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Padding" Value="16,10" />
+            <Setter Property="Opacity" Value="1" />
+            <Setter Property="BorderThickness" Value="2" />
+            <Setter Property="Foreground" Value="{DynamicResource MaterialDesignBody}" />
+            <Setter Property="Background" Value="#FFF8FAFC" />
+            <Setter Property="BorderBrush" Value="#FF94A3B8" />
+            <Setter Property="MinHeight" Value="48" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="FontSize" Value="15" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding DataContext.IsDarkMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                    <Setter Property="Background" Value="#233044" />
+                    <Setter Property="BorderBrush" Value="#7C8CA4" />
+                    <Setter Property="Foreground" Value="#F8FAFC" />
+                </DataTrigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="1" />
+                    <Setter Property="BorderThickness" Value="2" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="TopBarComboBoxItemStyle" TargetType="{x:Type ComboBoxItem}">
+            <Setter Property="Foreground" Value="#0F172A" />
+            <Setter Property="Background" Value="#F8FAFC" />
+            <Setter Property="Padding" Value="10,6" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding DataContext.IsDarkMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                    <Setter Property="Foreground" Value="#E5E7EB" />
+                    <Setter Property="Background" Value="#1F2937" />
+                </DataTrigger>
+                <Trigger Property="IsHighlighted" Value="True">
+                    <Setter Property="Background" Value="#DBEAFE" />
+                </Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#1D4ED8" />
+                    <Setter Property="Foreground" Value="White" />
+                </Trigger>
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding DataContext.IsDarkMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True" />
+                        <Condition Binding="{Binding RelativeSource={RelativeSource Self}, Path=IsHighlighted}" Value="True" />
+                    </MultiDataTrigger.Conditions>
+                    <Setter Property="Background" Value="#334155" />
+                </MultiDataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="TopBarComboBoxStyle"
+               TargetType="{x:Type ComboBox}"
+               BasedOn="{StaticResource MaterialDesignFilledComboBox}">
+            <Setter Property="MinHeight" Value="38" />
+            <Setter Property="Padding" Value="6,2" />
+            <Setter Property="Background" Value="#26FFFFFF" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="BorderBrush" Value="#55FFFFFF" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="ItemContainerStyle" Value="{StaticResource TopBarComboBoxItemStyle}" />
+        </Style>
+
+        <Style x:Key="TopBarToggleButtonStyle"
+               TargetType="{x:Type ToggleButton}"
+               BasedOn="{StaticResource MaterialDesignOutlinedButton}">
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="BorderBrush" Value="#55FFFFFF" />
+            <Setter Property="Background" Value="#26FFFFFF" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="MinHeight" Value="38" />
+            <Setter Property="MinWidth" Value="72" />
+            <Setter Property="Padding" Value="12,6" />
+        </Style>
+
+        <Style x:Key="DetailMetaCardStyle" TargetType="{x:Type Border}">
+            <Setter Property="Padding" Value="12,10" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Margin" Value="0,0,12,12" />
+            <Setter Property="Background" Value="#F8FAFC" />
+            <Setter Property="BorderBrush" Value="#D9E2F2" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding DataContext.IsDarkMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                    <Setter Property="Background" Value="#3F434B" />
+                    <Setter Property="BorderBrush" Value="#5B6472" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="DetailMetaLabelStyle" TargetType="{x:Type TextBlock}">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Opacity" Value="0.7" />
+            <Setter Property="Margin" Value="0,0,0,4" />
+        </Style>
+
+        <Style x:Key="DetailMetaValueStyle" TargetType="{x:Type TextBlock}">
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+
+        <Style x:Key="MessageDetailTabItemStyle" TargetType="{x:Type TabItem}" BasedOn="{StaticResource MaterialDesignTabItem}">
+            <Setter Property="Padding" Value="16,10" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+
+        <Style x:Key="MessageDetailSurfaceStyle" TargetType="{x:Type Border}">
+            <Setter Property="Padding" Value="14" />
+            <Setter Property="CornerRadius" Value="14" />
+            <Setter Property="Background" Value="#F8FAFC" />
+            <Setter Property="BorderBrush" Value="#D9E2F2" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding DataContext.IsDarkMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                    <Setter Property="Background" Value="#34383F" />
+                    <Setter Property="BorderBrush" Value="#4E5663" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <HierarchicalDataTemplate DataType="{x:Type models:JsonTreeNode}" ItemsSource="{Binding Children}">
+            <StackPanel Orientation="Horizontal">
+                <TextBox Style="{StaticResource JsonTreeKeyStyle}"
+                         FontFamily="Consolas"
+                         Text="{Binding Key}" />
+                <TextBox Style="{StaticResource JsonTreeSeparatorStyle}"
+                         FontFamily="Consolas"
+                         Text=": " />
+                <TextBox Style="{StaticResource JsonTreeValueStyle}"
+                         FontFamily="Consolas"
+                         Text="{Binding Value}" />
+            </StackPanel>
+        </HierarchicalDataTemplate>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <materialDesign:ColorZone Grid.Row="0"
+                                  Padding="20,12"
+                                  Mode="PrimaryDark">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel>
+                    <TextBlock FontSize="22"
+                               FontWeight="SemiBold"
+                               Text="{Binding Localizer[AppTitle]}" />
+                    <TextBlock Margin="0,6,0,0"
+                               Opacity="0.82"
+                               Text="{Binding Localizer[AppSubtitle]}" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="1"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center">
+                    <Border Margin="0,0,8,0"
+                            Padding="12,6"
+                            Background="#26FFFFFF"
+                            CornerRadius="16">
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Width="18"
+                                                     Height="18"
+                                                     Margin="0,0,8,0"
+                                                     VerticalAlignment="Center"
+                                                     Foreground="White"
+                                                     Kind="LanConnect" />
+                            <TextBlock VerticalAlignment="Center"
+                                       FontWeight="SemiBold"
+                                       Text="{Binding ConnectionStatusText}" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Margin="0,0,8,0"
+                            Padding="12,6"
+                            Background="#26FFFFFF"
+                            CornerRadius="16">
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Width="18"
+                                                     Height="18"
+                                                     Margin="0,0,8,0"
+                                                     VerticalAlignment="Center"
+                                                     Foreground="White"
+                                                     Kind="DatabaseEyeOutline" />
+                            <TextBlock VerticalAlignment="Center"
+                                       FontWeight="SemiBold"
+                                       Text="{Binding SessionModeText}" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Padding="12,6"
+                            Background="#26FFFFFF"
+                            CornerRadius="16">
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Width="18"
+                                                     Height="18"
+                                                     Margin="0,0,8,0"
+                                                     VerticalAlignment="Center"
+                                                     Foreground="White"
+                                                     Kind="TagOutline" />
+                            <TextBlock VerticalAlignment="Center"
+                                       FontWeight="SemiBold"
+                                       Text="{Binding ConnectionSettings.ProtocolVersion}" />
+                        </StackPanel>
+                    </Border>
+
+                    <ComboBox Width="126"
+                              Margin="8,0,8,0"
+                              Style="{StaticResource TopBarComboBoxStyle}"
+                              ItemsSource="{Binding LanguageOptions}"
+                              SelectedValue="{Binding SelectedLanguageCode}"
+                              SelectedValuePath="Value"
+                              DisplayMemberPath="Display" />
+
+                    <ToggleButton Style="{StaticResource TopBarToggleButtonStyle}"
+                                  IsChecked="{Binding IsDarkMode}"
+                                  Content="{Binding ThemeModeText}" />
+                </StackPanel>
+            </Grid>
+        </materialDesign:ColorZone>
+
+        <Grid Grid.Row="1" Margin="16,12,16,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.8*" />
+                <ColumnDefinition Width="2.4*" />
+                <ColumnDefinition Width="1.8*" />
+            </Grid.ColumnDefinitions>
+
+            <materialDesign:Card Grid.Column="0"
+                                 Margin="0,0,12,0"
+                                 Padding="14">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Orientation="Horizontal">
+                        <materialDesign:PackIcon Width="18"
+                                                 Height="18"
+                                                 Margin="0,0,8,0"
+                                                 VerticalAlignment="Center"
+                                                 Kind="DatabaseOutline" />
+                        <TextBlock VerticalAlignment="Center"
+                                   FontSize="18"
+                                   FontWeight="SemiBold"
+                                   Text="{Binding Localizer[SessionMode]}" />
+                    </StackPanel>
+
+                    <Border Grid.Row="1"
+                            Margin="0,10,0,0"
+                            Padding="5"
+                            Background="#0D3F51B5"
+                            CornerRadius="16">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <Button Grid.Column="0"
+                                    Margin="0,0,6,0"
+                                    Command="{Binding StartLiveSessionCommand}"
+                                    Content="{Binding Localizer[SessionLive]}">
+                                <Button.Style>
+                                    <Style TargetType="{x:Type Button}" BasedOn="{StaticResource SessionModeButtonStyle}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsImportedSession}" Value="False">
+                                                <Setter Property="Background" Value="#1D4ED8" />
+                                                <Setter Property="BorderBrush" Value="#1D4ED8" />
+                                                <Setter Property="Foreground" Value="White" />
+                                                <Setter Property="FontWeight" Value="Bold" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+
+                            <Button Grid.Column="1"
+                                    Margin="6,0,0,0"
+                                    Command="{Binding SwitchToImportedSessionCommand}"
+                                    Content="{Binding Localizer[SessionImported]}">
+                                <Button.Style>
+                                    <Style TargetType="{x:Type Button}" BasedOn="{StaticResource SessionModeButtonStyle}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsImportedSession}" Value="True">
+                                                <Setter Property="Background" Value="#15803D" />
+                                                <Setter Property="BorderBrush" Value="#15803D" />
+                                                <Setter Property="Foreground" Value="White" />
+                                                <Setter Property="FontWeight" Value="Bold" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                        </Grid>
+                    </Border>
+
+                    <TextBlock Grid.Row="2"
+                               Margin="0,8,0,0"
+                               Opacity="0.72"
+                               Text="{Binding SessionModeDescription}"
+                               TextWrapping="Wrap" />
+
+                </Grid>
+            </materialDesign:Card>
+
+            <materialDesign:Card Grid.Column="1"
+                                 Margin="0,0,12,0"
+                                 Padding="14">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Orientation="Horizontal">
+                        <materialDesign:PackIcon Width="18"
+                                                 Height="18"
+                                                 Margin="0,0,8,0"
+                                                 VerticalAlignment="Center"
+                                                 Kind="Connection">
+                            <materialDesign:PackIcon.Style>
+                                <Style TargetType="{x:Type materialDesign:PackIcon}">
+                                    <Setter Property="Kind" Value="Connection" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsImportedSession}" Value="True">
+                                            <Setter Property="Kind" Value="FileImportOutline" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </materialDesign:PackIcon.Style>
+                        </materialDesign:PackIcon>
+                        <TextBlock VerticalAlignment="Center"
+                                   FontSize="18"
+                                   FontWeight="SemiBold"
+                                   Text="{Binding ModePanelTitleText}" />
+                    </StackPanel>
+
+                    <Grid Grid.Row="1"
+                          Margin="0,14,0,0">
+                        <Grid.Style>
+                            <Style TargetType="{x:Type Grid}">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsImportedSession}" Value="True">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Grid.Style>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <WrapPanel>
+                            <TextBox Width="150"
+                                     Margin="0,0,8,8"
+                                     materialDesign:HintAssist.Hint="{Binding Localizer[Host]}"
+                                     Text="{Binding ConnectionSettings.Host, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox Width="90"
+                                     Margin="0,0,8,8"
+                                     materialDesign:HintAssist.Hint="{Binding Localizer[Port]}"
+                                     Text="{Binding ConnectionSettings.Port, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox Width="220"
+                                     Margin="0,0,8,8"
+                                     materialDesign:HintAssist.Hint="{Binding Localizer[TopicFilter]}"
+                                     Text="{Binding ConnectionSettings.TopicFilter, UpdateSourceTrigger=PropertyChanged}" />
+                        </WrapPanel>
+
+                        <WrapPanel Grid.Row="1">
+                            <TextBox Width="240"
+                                     Margin="0,0,8,8"
+                                     materialDesign:HintAssist.Hint="{Binding Localizer[ClientIdOptional]}"
+                                     Text="{Binding ConnectionSettings.ClientId, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox Width="170"
+                                     Margin="0,0,8,8"
+                                     materialDesign:HintAssist.Hint="{Binding Localizer[Username]}"
+                                     Text="{Binding ConnectionSettings.Username, UpdateSourceTrigger=PropertyChanged}" />
+                            <PasswordBox Width="170"
+                                         Margin="0,0,8,8"
+                                         materialDesign:HintAssist.Hint="{Binding Localizer[Password]}"
+                                         PasswordChanged="PasswordBox_OnPasswordChanged" />
+                        </WrapPanel>
+
+                        <DockPanel Grid.Row="2" Margin="0,6,0,0">
+                            <TextBlock VerticalAlignment="Center"
+                                       Opacity="0.68"
+                                       Text="{Binding Localizer[ConnectionHint]}"
+                                       TextWrapping="Wrap" />
+                            <StackPanel DockPanel.Dock="Right"
+                                        Margin="12,0,0,0"
+                                        Orientation="Horizontal">
+                                <Button Margin="0,0,8,0"
+                                        Command="{Binding ConnectCommand}"
+                                        Content="{Binding Localizer[Connect]}" />
+                                <Button Command="{Binding DisconnectCommand}"
+                                        Content="{Binding Localizer[Disconnect]}" />
+                            </StackPanel>
+                        </DockPanel>
+                    </Grid>
+
+                    <Grid Grid.Row="1"
+                          Margin="0,14,0,0">
+                        <Grid.Style>
+                            <Style TargetType="{x:Type Grid}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsImportedSession}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Grid.Style>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Opacity="0.72"
+                                   Text="{Binding Localizer[ImportedHint]}"
+                                   TextWrapping="Wrap" />
+
+                        <StackPanel Grid.Row="1"
+                                    Margin="0,14,0,0"
+                                    Orientation="Horizontal">
+                            <Button Margin="0,0,12,0"
+                                    Command="{Binding ImportCommand}"
+                                    Content="{Binding Localizer[OpenFile]}" />
+                            <Border Padding="12,8"
+                                    Background="#0D3F51B5"
+                                    CornerRadius="12">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Width="16"
+                                                             Height="16"
+                                                             Margin="0,0,6,0"
+                                                             VerticalAlignment="Center"
+                                                             Kind="FileDocumentOutline" />
+                                    <TextBlock VerticalAlignment="Center"
+                                               FontWeight="SemiBold"
+                                               Text="{Binding SessionSourceText}" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <TextBlock Grid.Row="2"
+                                   Margin="0,12,0,0"
+                                   Opacity="0.66"
+                                   Text="{Binding Localizer[ImportedReplaceHint]}"
+                                   TextWrapping="Wrap" />
+                    </Grid>
+                </Grid>
+            </materialDesign:Card>
+
+            <materialDesign:Card Grid.Column="2"
+                                 Padding="14">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Orientation="Horizontal">
+                        <materialDesign:PackIcon Width="18"
+                                                 Height="18"
+                                                 Margin="0,0,8,0"
+                                                 VerticalAlignment="Center"
+                                                 Kind="DatabaseArrowLeftOutline" />
+                        <TextBlock VerticalAlignment="Center"
+                                   FontSize="18"
+                                   FontWeight="SemiBold"
+                                   Text="{Binding Localizer[Data]}" />
+                    </StackPanel>
+
+                    <Grid Grid.Row="1" Margin="0,14,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="150" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <ComboBox Grid.Column="0"
+                                  Margin="0,0,8,0"
+                                  materialDesign:HintAssist.Hint="{Binding Localizer[ExportScope]}"
+                                  ItemsSource="{Binding ExportScopes}"
+                                  SelectedValue="{Binding SelectedExportScope}"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Display" />
+                        <Button Grid.Column="1"
+                                Margin="0,0,8,0"
+                                Command="{Binding ExportCommand}"
+                                Content="{Binding Localizer[Export]}" />
+                    </Grid>
+                </Grid>
+            </materialDesign:Card>
+        </Grid>
+
+        <Grid Grid.Row="2" Margin="16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2.2*" />
+                <ColumnDefinition Width="3*" />
+                <ColumnDefinition Width="3.25*" />
+            </Grid.ColumnDefinitions>
+
+            <materialDesign:Card Grid.Column="0"
+                                 Margin="0,0,12,0"
+                                 Padding="16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Width="18"
+                                                     Height="18"
+                                                     Margin="0,0,8,0"
+                                                     VerticalAlignment="Center"
+                                                     Kind="FormatListBulletedType" />
+                            <TextBlock VerticalAlignment="Center"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       Text="{Binding Localizer[TopicExplorer]}" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1"
+                                    Orientation="Horizontal">
+                            <Button Margin="0,0,8,0"
+                                    Command="{Binding ClearAllCommand}"
+                                    Content="{Binding Localizer[ClearAll]}" />
+                            <Button Command="{Binding ClearSelectedTopicCommand}"
+                                    Content="{Binding Localizer[ClearTopic]}" />
+                        </StackPanel>
+                    </Grid>
+
+                    <Grid Grid.Row="1" Margin="0,14,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="140" />
+                            <ColumnDefinition Width="140" />
+                        </Grid.ColumnDefinitions>
+
+                        <TextBox Grid.Column="0"
+                                 Margin="0,0,8,0"
+                                 materialDesign:HintAssist.Hint="{Binding Localizer[SearchTopic]}"
+                                 Text="{Binding TopicSearchText, UpdateSourceTrigger=PropertyChanged}" />
+                        <ComboBox Grid.Column="1"
+                                  Margin="0,0,8,0"
+                                  materialDesign:HintAssist.Hint="{Binding Localizer[Group]}"
+                                  ItemsSource="{Binding TopicGroupModes}"
+                                  SelectedValue="{Binding SelectedTopicGroupMode}"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Display" />
+                        <ComboBox Grid.Column="2"
+                                  materialDesign:HintAssist.Hint="{Binding Localizer[Sort]}"
+                                  ItemsSource="{Binding TopicSortModes}"
+                                  SelectedValue="{Binding SelectedTopicSortMode}"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Display" />
+                    </Grid>
+
+                    <ListView Grid.Row="2"
+                              Background="Transparent"
+                              BorderThickness="0"
+                              ItemContainerStyle="{StaticResource TopicListViewItemStyle}"
+                              ItemsSource="{Binding TopicsView}"
+                              ScrollViewer.VerticalScrollBarVisibility="Auto"
+                              SelectedItem="{Binding SelectedTopic}">
+                        <ListView.GroupStyle>
+                            <GroupStyle>
+                                <GroupStyle.HeaderTemplate>
+                                    <DataTemplate>
+                                        <Border Margin="0,8,0,6"
+                                                Padding="8,6"
+                                                Background="#123F51B5"
+                                                CornerRadius="10">
+                                            <TextBlock FontWeight="SemiBold"
+                                                       Text="{Binding Name}" />
+                                        </Border>
+                                    </DataTemplate>
+                                </GroupStyle.HeaderTemplate>
+                            </GroupStyle>
+                        </ListView.GroupStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="4,2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock x:Name="TopicNameText"
+                                                   FontWeight="SemiBold"
+                                                   Text="{Binding TopicName}" />
+                                        <TextBlock x:Name="VehicleKeyText"
+                                                   Margin="0,4,0,0"
+                                                   FontSize="11"
+                                                   Opacity="0.72"
+                                                   Text="{Binding VehicleKey}" />
+                                        <TextBlock x:Name="LastReceivedText"
+                                                   Margin="0,4,0,0"
+                                                   FontSize="11"
+                                                   Opacity="0.72"
+                                                   Text="{Binding LastReceivedAt, StringFormat={}{0:HH:mm:ss.fff}}" />
+                                    </StackPanel>
+                                    <Border x:Name="MessageCountBadge"
+                                            Grid.Column="1"
+                                            Padding="10,4"
+                                            VerticalAlignment="Center"
+                                            Background="#123F51B5"
+                                            CornerRadius="14">
+                                        <TextBlock FontSize="11"
+                                                   FontWeight="SemiBold"
+                                                   Text="{Binding MessageCount}" />
+                                    </Border>
+                                </Grid>
+                                <DataTemplate.Triggers>
+                                    <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=ListViewItem}, Path=IsSelected}" Value="True">
+                                        <Setter TargetName="TopicNameText" Property="Foreground" Value="#1D4ED8" />
+                                        <Setter TargetName="TopicNameText" Property="FontWeight" Value="Bold" />
+                                        <Setter TargetName="VehicleKeyText" Property="Opacity" Value="0.92" />
+                                        <Setter TargetName="LastReceivedText" Property="Opacity" Value="0.92" />
+                                        <Setter TargetName="MessageCountBadge" Property="Background" Value="#1D4ED8" />
+                                    </DataTrigger>
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding RelativeSource={RelativeSource AncestorType=ListViewItem}, Path=IsSelected}" Value="True" />
+                                            <Condition Binding="{Binding DataContext.IsDarkMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True" />
+                                        </MultiDataTrigger.Conditions>
+                                        <Setter TargetName="TopicNameText" Property="Foreground" Value="#F8FAFC" />
+                                        <Setter TargetName="VehicleKeyText" Property="Foreground" Value="#E2E8F0" />
+                                        <Setter TargetName="LastReceivedText" Property="Foreground" Value="#E2E8F0" />
+                                        <Setter TargetName="VehicleKeyText" Property="Opacity" Value="0.96" />
+                                        <Setter TargetName="LastReceivedText" Property="Opacity" Value="0.96" />
+                                        <Setter TargetName="MessageCountBadge" Property="Background" Value="#60A5FA" />
+                                    </MultiDataTrigger>
+                                </DataTemplate.Triggers>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Grid>
+            </materialDesign:Card>
+
+            <materialDesign:Card Grid.Column="1"
+                                 Margin="0,0,12,0"
+                                 Padding="16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="150" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Width="18"
+                                                     Height="18"
+                                                     Margin="0,0,8,0"
+                                                     VerticalAlignment="Center"
+                                                     Kind="MessageTextOutline" />
+                            <TextBlock VerticalAlignment="Center"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       Text="{Binding SelectedTopicDisplayText}" />
+                        </StackPanel>
+
+                        <ComboBox Grid.Column="1"
+                                  Margin="12,0,0,0"
+                                  materialDesign:HintAssist.Hint="{Binding Localizer[Sort]}"
+                                  ItemsSource="{Binding MessageSortModes}"
+                                  SelectedValue="{Binding SelectedMessageSortMode}"
+                                  SelectedValuePath="Value"
+                                  DisplayMemberPath="Display" />
+
+                        <Button Grid.Column="2"
+                                Margin="12,0,0,0"
+                                Command="{Binding ClearSelectedMessageCommand}"
+                                Content="{Binding Localizer[ClearMessage]}" />
+                    </Grid>
+
+                    <DataGrid Grid.Row="1"
+                              AutoGenerateColumns="False"
+                              CanUserAddRows="False"
+                              HeadersVisibility="Column"
+                              IsReadOnly="True"
+                              ItemsSource="{Binding MessagesView}"
+                              SelectedItem="{Binding SelectedMessage}"
+                              SelectionMode="Single"
+                              SelectionUnit="FullRow"
+                              VirtualizingPanel.IsVirtualizing="True"
+                              VirtualizingPanel.VirtualizationMode="Recycling">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn x:Name="ReceivedAtColumn"
+                                                Binding="{Binding ReceivedAt, Mode=OneWay, StringFormat={}{0:HH:mm:ss.fff}}"
+                                                Header="Received At"
+                                                Width="140" />
+                            <DataGridTextColumn x:Name="SizeColumn"
+                                                Binding="{Binding PayloadSize, Mode=OneWay}"
+                                                Header="Size"
+                                                Width="65" />
+                            <DataGridCheckBoxColumn x:Name="RetainColumn"
+                                                    Binding="{Binding Retain, Mode=OneWay}"
+                                                    Header="Retain"
+                                                    Width="70" />
+                            <DataGridTextColumn x:Name="PreviewColumn"
+                                                Binding="{Binding Preview, Mode=OneWay}"
+                                                Header="Preview"
+                                                Width="*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </materialDesign:Card>
+
+            <materialDesign:Card Grid.Column="2"
+                                 Padding="16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Width="18"
+                                                     Height="18"
+                                                     Margin="0,0,8,0"
+                                                     VerticalAlignment="Center"
+                                                     Kind="TextBoxSearchOutline" />
+                            <TextBlock VerticalAlignment="Center"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       Text="{Binding Localizer[MessageDetail]}" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1"
+                                    Orientation="Horizontal">
+                            <Button Margin="0,0,8,0"
+                                    Command="{Binding CopyRawCommand}"
+                                    Content="{Binding Localizer[CopyRaw]}" />
+                            <Button Margin="0,0,8,0"
+                                    Command="{Binding CopyPrettyCommand}"
+                                    Content="{Binding Localizer[CopyPretty]}" />
+                            <Button Command="{Binding CopyFullCommand}"
+                                    Content="{Binding Localizer[CopyFull]}" />
+                        </StackPanel>
+                    </Grid>
+
+                    <Grid Grid.Row="1" Margin="0,14,0,14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <Border Grid.Row="0" Grid.Column="0" Style="{StaticResource DetailMetaCardStyle}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource DetailMetaLabelStyle}" Text="{Binding Localizer[Topic]}" />
+                                <TextBlock Style="{StaticResource DetailMetaValueStyle}"
+                                           Text="{Binding SelectedMessage.TopicName, TargetNullValue=-}"
+                                           TextTrimming="CharacterEllipsis"
+                                           ToolTip="{Binding SelectedMessage.TopicName}" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Row="0" Grid.Column="1" Style="{StaticResource DetailMetaCardStyle}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource DetailMetaLabelStyle}" Text="{Binding Localizer[ReceivedAt]}" />
+                                <TextBlock Style="{StaticResource DetailMetaValueStyle}"
+                                           Text="{Binding SelectedMessage.ReceivedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss.fff}, TargetNullValue=-}" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Row="0" Grid.Column="2" Margin="0,0,0,12" Style="{StaticResource DetailMetaCardStyle}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource DetailMetaLabelStyle}" Text="{Binding Localizer[Qos]}" />
+                                <TextBlock Style="{StaticResource DetailMetaValueStyle}"
+                                           Text="{Binding SelectedMessage.Qos, TargetNullValue=-}" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Row="1" Grid.Column="0" Style="{StaticResource DetailMetaCardStyle}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource DetailMetaLabelStyle}" Text="{Binding Localizer[Retain]}" />
+                                <TextBlock Style="{StaticResource DetailMetaValueStyle}"
+                                           Text="{Binding SelectedMessage.Retain, TargetNullValue=-}" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource DetailMetaCardStyle}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource DetailMetaLabelStyle}" Text="{Binding Localizer[PayloadSize]}" />
+                                <TextBlock Style="{StaticResource DetailMetaValueStyle}"
+                                           Text="{Binding SelectedMessage.PayloadSize, TargetNullValue=-}" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Row="1" Grid.Column="2" Margin="0,0,0,12" Style="{StaticResource DetailMetaCardStyle}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource DetailMetaLabelStyle}" Text="{Binding Localizer[JsonStatus]}" />
+                                <TextBlock Style="{StaticResource DetailMetaValueStyle}"
+                                           Text="{Binding SelectedMessageJsonStatus}" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <TabControl Grid.Row="2"
+                                ItemContainerStyle="{StaticResource MessageDetailTabItemStyle}">
+                        <TabItem Header="{Binding Localizer[PrettyJson]}">
+                            <Border Margin="0,8,0,0" Style="{StaticResource MessageDetailSurfaceStyle}">
+                                <RichTextBox x:Name="PrettyJsonViewer"
+                                             Background="Transparent"
+                                             BorderThickness="0"
+                                             FontFamily="Consolas"
+                                             FontSize="13"
+                                             IsReadOnly="True"
+                                             IsUndoEnabled="False"
+                                             HorizontalScrollBarVisibility="Auto"
+                                             VerticalScrollBarVisibility="Auto" />
+                            </Border>
+                        </TabItem>
+
+                        <TabItem Header="{Binding Localizer[Diff]}">
+                            <Border Margin="0,8,0,0" Style="{StaticResource MessageDetailSurfaceStyle}">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                    </Grid.RowDefinitions>
+
+                                    <Border Padding="12"
+                                            Background="#E6EAF3"
+                                            CornerRadius="12">
+                                        <Border.Style>
+                                            <Style TargetType="{x:Type Border}">
+                                                <Setter Property="Background" Value="#E6EAF3" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding DataContext.IsDarkMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                                                        <Setter Property="Background" Value="#5A5563" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <StackPanel>
+                                            <TextBlock FontSize="14"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="#1F2937"
+                                                       Text="{Binding Localizer[DiffTitle]}" />
+                                            <TextBlock Margin="0,6,0,0"
+                                                       FontSize="13"
+                                                       Foreground="#1F2937"
+                                                       Text="{Binding SelectedMessageDiffSummary}" />
+                                            <TextBlock Margin="0,6,0,0"
+                                                       FontSize="11"
+                                                       Foreground="#475569"
+                                                       Text="{Binding Localizer[DiffLegend]}" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <ListBox Grid.Row="1"
+                                             Margin="0,10,0,0"
+                                             Background="Transparent"
+                                             BorderThickness="0"
+                                             ItemsSource="{Binding SelectedMessageDiffLines}">
+                                        <ListBox.ItemContainerStyle>
+                                            <Style TargetType="{x:Type ListBoxItem}">
+                                                <Setter Property="Padding" Value="0" />
+                                                <Setter Property="Margin" Value="0" />
+                                                <Setter Property="MinHeight" Value="0" />
+                                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                            </Style>
+                                        </ListBox.ItemContainerStyle>
+                                        <ListBox.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type models:DiffLine}">
+                                            <Border Margin="0,0,0,4"
+                                                    Padding="8,4"
+                                                    CornerRadius="10">
+                                                <Border.Style>
+                                                        <Style TargetType="{x:Type Border}">
+                                                            <Setter Property="Background" Value="Transparent" />
+                                                            <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Kind}" Value="Added">
+                                                                    <Setter Property="Background" Value="#C7F0D8" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding Kind}" Value="Removed">
+                                                                    <Setter Property="Background" Value="#F8D0D0" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                    <TextBlock FontFamily="Consolas"
+                                                               FontSize="12"
+                                                               FontWeight="SemiBold"
+                                                               LineHeight="16"
+                                                               Text="{Binding Text}">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="{x:Type TextBlock}">
+                                                                <Setter Property="Foreground" Value="#111827" />
+                                                                <Style.Triggers>
+                                                                     <DataTrigger Binding="{Binding DataContext.IsDarkMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                                                                         <Setter Property="Foreground" Value="#E5E7EB" />
+                                                                     </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding Kind}" Value="Added">
+                                                                        <Setter Property="Foreground" Value="#14532D" />
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding Kind}" Value="Removed">
+                                                                        <Setter Property="Foreground" Value="#7F1D1D" />
+                                                                    </DataTrigger>
+                                                                    <MultiDataTrigger>
+                                                                        <MultiDataTrigger.Conditions>
+                                                                            <Condition Binding="{Binding DataContext.IsDarkMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True" />
+                                                                            <Condition Binding="{Binding Kind}" Value="Added" />
+                                                                        </MultiDataTrigger.Conditions>
+                                                                        <Setter Property="Foreground" Value="#052E16" />
+                                                                    </MultiDataTrigger>
+                                                                    <MultiDataTrigger>
+                                                                        <MultiDataTrigger.Conditions>
+                                                                            <Condition Binding="{Binding DataContext.IsDarkMode, RelativeSource={RelativeSource AncestorType=Window}}" Value="True" />
+                                                                            <Condition Binding="{Binding Kind}" Value="Removed" />
+                                                                        </MultiDataTrigger.Conditions>
+                                                                        <Setter Property="Foreground" Value="#4C0519" />
+                                                                    </MultiDataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                </Grid>
+                            </Border>
+                        </TabItem>
+
+                        <TabItem Header="{Binding Localizer[JsonTree]}">
+                            <Border Margin="0,8,0,0" Style="{StaticResource MessageDetailSurfaceStyle}">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                    </Grid.RowDefinitions>
+
+                                    <Grid Margin="0,0,0,10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="260" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <TextBox Grid.Column="0"
+                                                 HorizontalAlignment="Left"
+                                                 materialDesign:HintAssist.Hint="{Binding Localizer[SearchJsonTree]}"
+                                                 Text="{Binding JsonSearchText, UpdateSourceTrigger=PropertyChanged}" />
+                                        <Button Grid.Column="1"
+                                                Margin="8,0,8,0"
+                                                Command="{Binding CollapseJsonTreeToRootCommand}"
+                                                Content="{Binding Localizer[CollapseToRoot]}" />
+                                        <Button Grid.Column="2"
+                                                Command="{Binding ExpandJsonTreeCommand}"
+                                                Content="{Binding Localizer[ExpandAll]}" />
+                                    </Grid>
+
+                                    <TreeView Grid.Row="1"
+                                              ItemContainerStyle="{StaticResource JsonTreeItemContainerStyle}"
+                                              ItemsSource="{Binding JsonTreeNodes}" />
+                                </Grid>
+                            </Border>
+                        </TabItem>
+
+                        <TabItem Header="{Binding Localizer[Raw]}">
+                            <Border Margin="0,8,0,0" Style="{StaticResource MessageDetailSurfaceStyle}">
+                                <TextBox FontFamily="Consolas"
+                                         IsReadOnly="True"
+                                         AcceptsReturn="True"
+                                         Background="Transparent"
+                                         BorderThickness="0"
+                                         HorizontalScrollBarVisibility="Auto"
+                                         Text="{Binding SelectedMessageRawText, Mode=OneWay}"
+                                         TextWrapping="NoWrap"
+                                         VerticalScrollBarVisibility="Auto" />
+                            </Border>
+                        </TabItem>
+                    </TabControl>
+                </Grid>
+            </materialDesign:Card>
+        </Grid>
+
+        <materialDesign:Card Grid.Row="3"
+                             Margin="16,0,16,16"
+                             Padding="12">
+            <DockPanel LastChildFill="True">
+                <StackPanel Orientation="Horizontal">
+                    <materialDesign:PackIcon Width="16"
+                                             Height="16"
+                                             Margin="0,0,8,0"
+                                             VerticalAlignment="Center"
+                                             Kind="Pulse" />
+                    <TextBlock VerticalAlignment="Center"
+                               Text="{Binding StatusText}" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal"
+                            HorizontalAlignment="Right">
+                    <TextBlock Margin="0,0,16,0"
+                               Text="{Binding TotalReceivedCountText}" />
+                    <TextBlock Margin="0,0,16,0"
+                               Text="{Binding SelectedTopicMessageCountText}" />
+                    <TextBlock Text="{Binding LastReceivedAtText}" />
+                </StackPanel>
+            </DockPanel>
+        </materialDesign:Card>
+    </Grid>
+</Window>
