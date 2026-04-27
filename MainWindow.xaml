@@ -7,6 +7,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="{Binding Localizer[AppTitle]}"
+        Icon="icon.ico"
         Width="1760"
         Height="1080"
         MinWidth="1400"
