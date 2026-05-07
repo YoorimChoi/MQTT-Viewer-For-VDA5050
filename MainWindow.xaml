@@ -979,76 +979,298 @@
             <materialDesign:Card Grid.Column="1"
                                  Margin="0,0,12,0"
                                  Padding="16">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
+                <TabControl>
+                    <TabItem Header="{Binding Localizer[SelectedTopicTab]}">
+                        <Grid Margin="0,14,0,0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
 
-                    <Grid Margin="0,0,0,12">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="150" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
+                            <Grid Margin="0,0,0,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="150" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
 
-                        <StackPanel Orientation="Horizontal">
-                            <materialDesign:PackIcon Width="18"
-                                                     Height="18"
-                                                     Margin="0,0,8,0"
-                                                     VerticalAlignment="Center"
-                                                     Kind="MessageTextOutline" />
-                            <TextBlock VerticalAlignment="Center"
-                                       FontSize="18"
-                                       FontWeight="SemiBold"
-                                       Text="{Binding SelectedTopicDisplayText}" />
-                        </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Width="18"
+                                                             Height="18"
+                                                             Margin="0,0,8,0"
+                                                             VerticalAlignment="Center"
+                                                             Kind="MessageTextOutline" />
+                                    <TextBlock VerticalAlignment="Center"
+                                               FontSize="18"
+                                               FontWeight="SemiBold"
+                                               Text="{Binding SelectedTopicDisplayText}" />
+                                </StackPanel>
 
-                        <ComboBox Grid.Column="1"
-                                  Margin="12,0,0,0"
-                                  materialDesign:HintAssist.Hint="{Binding Localizer[Sort]}"
-                                  ItemsSource="{Binding MessageSortModes}"
-                                  SelectedValue="{Binding SelectedMessageSortMode}"
-                                  SelectedValuePath="Value"
-                                  DisplayMemberPath="Display" />
+                                <ComboBox Grid.Column="1"
+                                          Margin="12,0,0,0"
+                                          materialDesign:HintAssist.Hint="{Binding Localizer[Sort]}"
+                                          ItemsSource="{Binding MessageSortModes}"
+                                          SelectedValue="{Binding SelectedMessageSortMode}"
+                                          SelectedValuePath="Value"
+                                          DisplayMemberPath="Display" />
 
-                        <Button Grid.Column="2"
-                                Margin="12,0,0,0"
-                                Command="{Binding ClearSelectedMessageCommand}"
-                                Content="{Binding Localizer[ClearMessage]}" />
-                    </Grid>
+                                <Button Grid.Column="2"
+                                        Margin="12,0,0,0"
+                                        Command="{Binding ClearSelectedMessageCommand}"
+                                        Content="{Binding Localizer[ClearMessage]}" />
+                            </Grid>
 
-                    <DataGrid Grid.Row="1"
-                              AutoGenerateColumns="False"
-                              CanUserAddRows="False"
-                              HeadersVisibility="Column"
-                              IsReadOnly="True"
-                              ItemsSource="{Binding MessagesView}"
-                              SelectedItem="{Binding SelectedMessage}"
-                              SelectionMode="Single"
-                              SelectionUnit="FullRow"
-                              VirtualizingPanel.IsVirtualizing="True"
-                              VirtualizingPanel.VirtualizationMode="Recycling">
-                        <DataGrid.Columns>
-                            <DataGridTextColumn x:Name="ReceivedAtColumn"
-                                                Binding="{Binding ReceivedAt, Mode=OneWay, StringFormat={}{0:HH:mm:ss.fff}}"
-                                                Header="Received At"
-                                                Width="140" />
-                            <DataGridTextColumn x:Name="SizeColumn"
-                                                Binding="{Binding PayloadSize, Mode=OneWay}"
-                                                Header="Size"
-                                                Width="65" />
-                            <DataGridCheckBoxColumn x:Name="RetainColumn"
-                                                    Binding="{Binding Retain, Mode=OneWay}"
-                                                    Header="Retain"
-                                                    Width="70" />
-                            <DataGridTextColumn x:Name="PreviewColumn"
-                                                Binding="{Binding Preview, Mode=OneWay}"
-                                                Header="Preview"
-                                                Width="*" />
-                        </DataGrid.Columns>
-                    </DataGrid>
-                </Grid>
+                            <DataGrid Grid.Row="1"
+                                      AutoGenerateColumns="False"
+                                      CanUserAddRows="False"
+                                      HeadersVisibility="Column"
+                                      IsReadOnly="True"
+                                      ItemsSource="{Binding MessagesView}"
+                                      SelectedItem="{Binding SelectedMessage}"
+                                      SelectionMode="Single"
+                                      SelectionUnit="FullRow"
+                                      VirtualizingPanel.IsVirtualizing="True"
+                                      VirtualizingPanel.VirtualizationMode="Recycling">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn x:Name="ReceivedAtColumn"
+                                                        Binding="{Binding ReceivedAt, Mode=OneWay, StringFormat={}{0:HH:mm:ss.fff}}"
+                                                        Header="Received At"
+                                                        Width="140" />
+                                    <DataGridTextColumn x:Name="SizeColumn"
+                                                        Binding="{Binding PayloadSize, Mode=OneWay}"
+                                                        Header="Size"
+                                                        Width="65" />
+                                    <DataGridCheckBoxColumn x:Name="RetainColumn"
+                                                            Binding="{Binding Retain, Mode=OneWay}"
+                                                            Header="Retain"
+                                                            Width="70" />
+                                    <DataGridTextColumn x:Name="PreviewColumn"
+                                                        Binding="{Binding Preview, Mode=OneWay}"
+                                                        Header="Preview"
+                                                        Width="*" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Grid>
+                    </TabItem>
+
+                    <TabItem Header="{Binding Localizer[AllMessagesTab]}">
+                        <Grid Margin="0,14,0,0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+
+                            <Grid Margin="0,0,0,12">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <StackPanel Grid.Row="0"
+                                            Grid.ColumnSpan="4"
+                                            Margin="0,0,0,8"
+                                            Orientation="Horizontal">
+                                    <TextBlock Margin="0,0,8,0"
+                                               VerticalAlignment="Center"
+                                               FontSize="12"
+                                               FontWeight="SemiBold"
+                                               Opacity="0.72"
+                                               Text="{Binding Localizer[Vehicle]}" />
+                                    <Button x:Name="VehicleFilterButton"
+                                            Width="170"
+                                            Margin="0,0,20,0"
+                                            Padding="12,6"
+                                            Style="{StaticResource MaterialDesignOutlinedButton}"
+                                            Command="{Binding ToggleVehicleFilterPopupCommand}">
+                                        <TextBlock Text="{Binding VehicleFilterSummary}"
+                                                   TextTrimming="CharacterEllipsis" />
+                                    </Button>
+
+                                    <TextBlock Margin="0,0,8,0"
+                                               VerticalAlignment="Center"
+                                               FontSize="12"
+                                               FontWeight="SemiBold"
+                                               Opacity="0.72"
+                                               Text="{Binding Localizer[MessageType]}" />
+                                    <Button x:Name="MessageTypeFilterButton"
+                                            Width="170"
+                                            Padding="12,6"
+                                            Style="{StaticResource MaterialDesignOutlinedButton}"
+                                            Command="{Binding ToggleMessageTypeFilterPopupCommand}">
+                                        <TextBlock Text="{Binding MessageTypeFilterSummary}"
+                                                   TextTrimming="CharacterEllipsis" />
+                                    </Button>
+                                </StackPanel>
+
+                                <Popup PlacementTarget="{Binding ElementName=VehicleFilterButton}"
+                                       DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"
+                                       IsOpen="{Binding IsVehicleFilterPopupOpen, Mode=TwoWay}"
+                                       Placement="Bottom"
+                                       StaysOpen="False">
+                                    <Border MinWidth="240"
+                                            MaxHeight="320"
+                                            Padding="12"
+                                            Background="{DynamicResource MaterialDesignPaper}"
+                                            BorderBrush="{DynamicResource MaterialDesignDivider}"
+                                            BorderThickness="1">
+                                        <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="*" />
+                                            </Grid.RowDefinitions>
+                                            <TextBlock Margin="0,0,0,8"
+                                                       FontWeight="SemiBold"
+                                                       Text="{Binding Localizer[FilterVehicleTitle]}" />
+                                            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                                                <ItemsControl ItemsSource="{Binding VehicleFilterOptions}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate DataType="{x:Type models:MessageFilterOption}">
+                                                            <CheckBox Margin="0,3"
+                                                                      Content="{Binding DisplayText}"
+                                                                      IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </ScrollViewer>
+                                        </Grid>
+                                    </Border>
+                                </Popup>
+
+                                <Popup PlacementTarget="{Binding ElementName=MessageTypeFilterButton}"
+                                       DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"
+                                       IsOpen="{Binding IsMessageTypeFilterPopupOpen, Mode=TwoWay}"
+                                       Placement="Bottom"
+                                       StaysOpen="False">
+                                    <Border MinWidth="240"
+                                            MaxHeight="320"
+                                            Padding="12"
+                                            Background="{DynamicResource MaterialDesignPaper}"
+                                            BorderBrush="{DynamicResource MaterialDesignDivider}"
+                                            BorderThickness="1">
+                                        <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="*" />
+                                            </Grid.RowDefinitions>
+                                            <TextBlock Margin="0,0,0,8"
+                                                       FontWeight="SemiBold"
+                                                       Text="{Binding Localizer[FilterMessageTypeTitle]}" />
+                                            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                                                <ItemsControl ItemsSource="{Binding MessageTypeFilterOptions}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate DataType="{x:Type models:MessageFilterOption}">
+                                                            <CheckBox Margin="0,3"
+                                                                      Content="{Binding DisplayText}"
+                                                                      IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </ScrollViewer>
+                                        </Grid>
+                                    </Border>
+                                </Popup>
+
+                                <Grid Grid.Row="1" Grid.ColumnSpan="4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBox Grid.Column="0"
+                                             Margin="0,0,8,0"
+                                             materialDesign:HintAssist.Hint="{Binding Localizer[SearchAllMessages]}"
+                                             Text="{Binding AllMessagesFilterText, UpdateSourceTrigger=PropertyChanged}" />
+
+                                    <Button Grid.Column="1"
+                                            Padding="14,6"
+                                            Command="{Binding ClearAllMessagesFilterCommand}"
+                                            Content="{Binding Localizer[Clear]}" />
+                                </Grid>
+                            </Grid>
+
+                            <DataGrid Grid.Row="1"
+                                      AutoGenerateColumns="False"
+                                      Background="Transparent"
+                                      BorderThickness="0"
+                                      CanUserAddRows="False"
+                                      ColumnHeaderHeight="34"
+                                      GridLinesVisibility="Horizontal"
+                                      HorizontalGridLinesBrush="#E5E7EB"
+                                      HeadersVisibility="Column"
+                                      IsReadOnly="True"
+                                      ItemsSource="{Binding AllMessagesView}"
+                                      RowHeight="30"
+                                      SelectedItem="{Binding SelectedMessage}"
+                                      SelectionMode="Single"
+                                      SelectionUnit="FullRow"
+                                      VirtualizingPanel.IsVirtualizing="True"
+                                      VirtualizingPanel.VirtualizationMode="Recycling">
+                                <DataGrid.Resources>
+                                    <Style TargetType="{x:Type DataGridCell}">
+                                        <Setter Property="Background" Value="Transparent" />
+                                        <Setter Property="BorderBrush" Value="Transparent" />
+                                        <Setter Property="BorderThickness" Value="0" />
+                                        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                                        <Setter Property="Padding" Value="8,0" />
+                                        <Setter Property="VerticalContentAlignment" Value="Center" />
+                                        <Style.Triggers>
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter Property="Foreground" Value="#0F172A" />
+                                                <Setter Property="Background" Value="#DBEAFE" />
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                    <Style TargetType="{x:Type DataGridColumnHeader}">
+                                        <Setter Property="Background" Value="#F8FAFC" />
+                                        <Setter Property="BorderBrush" Value="#E5E7EB" />
+                                        <Setter Property="BorderThickness" Value="0,0,0,1" />
+                                        <Setter Property="FontSize" Value="12" />
+                                        <Setter Property="FontWeight" Value="SemiBold" />
+                                        <Setter Property="Foreground" Value="#475569" />
+                                        <Setter Property="Padding" Value="8,0" />
+                                        <Setter Property="HorizontalContentAlignment" Value="Left" />
+                                        <Setter Property="VerticalContentAlignment" Value="Center" />
+                                        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                                    </Style>
+                                    <Style TargetType="{x:Type DataGridRow}">
+                                        <Setter Property="Background" Value="Transparent" />
+                                        <Setter Property="Foreground" Value="#0F172A" />
+                                        <Setter Property="SnapsToDevicePixels" Value="True" />
+                                        <Style.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter Property="Background" Value="#F1F5F9" />
+                                            </Trigger>
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter Property="Background" Value="#DBEAFE" />
+                                                <Setter Property="Foreground" Value="#0F172A" />
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGrid.Resources>
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Binding="{Binding ReceivedAt, Mode=OneWay, StringFormat={}{0:HH:mm:ss.fff}}"
+                                                        Header="Received At"
+                                                        Width="115" />
+                                    <DataGridTextColumn Binding="{Binding VehicleKey, Mode=OneWay}"
+                                                        Header="Vehicle"
+                                                        Width="180" />
+                                    <DataGridTextColumn Binding="{Binding MessageType, Mode=OneWay}"
+                                                        Header="Message Type"
+                                                        Width="120" />
+                                    <DataGridTextColumn Binding="{Binding Preview, Mode=OneWay}"
+                                                        Header="Preview"
+                                                        Width="*" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Grid>
+                    </TabItem>
+                </TabControl>
             </materialDesign:Card>
 
             <materialDesign:Card Grid.Column="2"
@@ -1354,6 +1576,8 @@
                                Text="{Binding TotalReceivedCountText}" />
                     <TextBlock Margin="0,0,16,0"
                                Text="{Binding SelectedTopicMessageCountText}" />
+                    <TextBlock Margin="0,0,16,0"
+                               Text="{Binding AllMessagesFilteredCountText}" />
                     <TextBlock Text="{Binding LastReceivedAtText}" />
                 </StackPanel>
             </DockPanel>

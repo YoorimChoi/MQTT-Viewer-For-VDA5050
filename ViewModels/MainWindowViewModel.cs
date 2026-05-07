@@ -23,6 +23,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private readonly Dictionary<string, TopicSummary> _topicByName = new(StringComparer.Ordinal);
     private readonly Dictionary<string, CancellationTokenSource> _highlightByTopic = new(StringComparer.Ordinal);
     private readonly List<JsonTreeNode> _rawJsonTreeNodes = [];
+    private readonly HashSet<string> _selectedVehicleFilters = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _selectedMessageTypeFilters = new(StringComparer.Ordinal);
 
     private TopicSummary? _selectedTopic;
     private ReceivedMessage? _selectedMessage;
@@ -32,6 +34,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private string _selectedTopicGroupMode = "Vehicle";
     private string _selectedMessageSortMode = "NewestFirst";
     private string _selectedExportScope = "AllTopics";
+    private string _allMessagesFilterText = string.Empty;
+    private bool _isVehicleFilterPopupOpen;
+    private bool _isMessageTypeFilterPopupOpen;
     private ConnectionStatus _connectionStatus = ConnectionStatus.Disconnected;
     private string _statusText = string.Empty;
     private string _sessionSourceText = string.Empty;
@@ -61,6 +66,14 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         MessagesView = CollectionViewSource.GetDefaultView(CurrentTopicMessages);
         ApplyMessageSorting();
 
+        AllMessages = new ObservableCollection<ReceivedMessage>();
+        AllMessagesView = CollectionViewSource.GetDefaultView(AllMessages);
+        AllMessagesView.Filter = AllMessagesFilterPredicate;
+        ApplyAllMessagesSorting();
+
+        VehicleFilterOptions = new ObservableCollection<MessageFilterOption>();
+        MessageTypeFilterOptions = new ObservableCollection<MessageFilterOption>();
+
         LanguageOptions = new ObservableCollection<SelectionOption>
         {
             new("en", "LanguageEnglish"),
@@ -86,6 +99,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             new("SelectedMessage", "ExportSelectedMessage"),
             new("SelectedTopic", "ExportSelectedTopic"),
+            new("FilteredAllMessages", "ExportFilteredAllMessages"),
             new("AllTopics", "ExportAllTopics")
         };
         JsonTreeNodes = new ObservableCollection<JsonTreeNode>();
@@ -99,6 +113,9 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         ClearAllCommand = new RelayCommand(ClearAllMessages, () => TotalReceivedCount > 0);
         ClearSelectedTopicCommand = new RelayCommand(ClearSelectedTopicMessages, () => SelectedTopic is not null);
         ClearSelectedMessageCommand = new RelayCommand(ClearSelectedMessage, () => SelectedMessage is not null);
+        ClearAllMessagesFilterCommand = new RelayCommand(ClearAllMessagesFilter, HasAnyAllMessagesFilter);
+        ToggleVehicleFilterPopupCommand = new RelayCommand(() => IsVehicleFilterPopupOpen = !IsVehicleFilterPopupOpen);
+        ToggleMessageTypeFilterPopupCommand = new RelayCommand(() => IsMessageTypeFilterPopupOpen = !IsMessageTypeFilterPopupOpen);
         ExportCommand = new AsyncRelayCommand(ExportAsync, CanExport);
         CopyRawCommand = new RelayCommand(CopyRawPayload, () => SelectedMessage is not null);
         CopyPrettyCommand = new RelayCommand(CopyPrettyPayload, () => SelectedMessage is not null);
@@ -127,6 +144,14 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     public ObservableCollection<ReceivedMessage> CurrentTopicMessages { get; }
 
     public ICollectionView MessagesView { get; }
+
+    public ObservableCollection<ReceivedMessage> AllMessages { get; }
+
+    public ICollectionView AllMessagesView { get; }
+
+    public ObservableCollection<MessageFilterOption> VehicleFilterOptions { get; }
+
+    public ObservableCollection<MessageFilterOption> MessageTypeFilterOptions { get; }
 
     public ObservableCollection<SelectionOption> LanguageOptions { get; }
 
@@ -252,7 +277,41 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     public string SelectedExportScope
     {
         get => _selectedExportScope;
-        set => SetProperty(ref _selectedExportScope, value);
+        set
+        {
+            if (!SetProperty(ref _selectedExportScope, value))
+            {
+                return;
+            }
+
+            ExportCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    public string AllMessagesFilterText
+    {
+        get => _allMessagesFilterText;
+        set
+        {
+            if (!SetProperty(ref _allMessagesFilterText, value))
+            {
+                return;
+            }
+
+            RefreshAllMessagesViewState();
+        }
+    }
+
+    public bool IsVehicleFilterPopupOpen
+    {
+        get => _isVehicleFilterPopupOpen;
+        set => SetProperty(ref _isVehicleFilterPopupOpen, value);
+    }
+
+    public bool IsMessageTypeFilterPopupOpen
+    {
+        get => _isMessageTypeFilterPopupOpen;
+        set => SetProperty(ref _isMessageTypeFilterPopupOpen, value);
     }
 
     public string StatusText
@@ -351,6 +410,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             }
 
             OnPropertyChanged(nameof(TotalReceivedCountText));
+            OnPropertyChanged(nameof(AllMessagesResultCountText));
         }
     }
 
@@ -376,6 +436,14 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public string SelectedTopicMessageCountText => TF("SelectedTopicLabel", SelectedTopicMessageCount);
 
+    public string AllMessagesResultCountText => TF("AllMessagesResultCount", AllMessagesFilteredCount, AllMessages.Count);
+
+    public string AllMessagesFilteredCountText => TF("AllMessagesFilteredCount", AllMessagesFilteredCount);
+
+    public string VehicleFilterSummary => BuildFilterSummary(_selectedVehicleFilters);
+
+    public string MessageTypeFilterSummary => BuildFilterSummary(_selectedMessageTypeFilters);
+
     public string SelectedMessageDiffSummary
     {
         get => _selectedMessageDiffSummary;
@@ -383,6 +451,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     }
 
     public int SelectedTopicMessageCount => CurrentTopicMessages.Count;
+
+    public int AllMessagesFilteredCount => AllMessagesView.Cast<object>().Count();
 
     public string SelectedTopicDisplayText => SelectedTopic?.TopicName ?? Localizer["NoTopicSelected"];
 
@@ -432,6 +502,12 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public RelayCommand ClearSelectedMessageCommand { get; }
 
+    public RelayCommand ClearAllMessagesFilterCommand { get; }
+
+    public RelayCommand ToggleVehicleFilterPopupCommand { get; }
+
+    public RelayCommand ToggleMessageTypeFilterPopupCommand { get; }
+
     public AsyncRelayCommand ExportCommand { get; }
 
     public RelayCommand CopyRawCommand { get; }
@@ -466,6 +542,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(LastReceivedAtText));
         OnPropertyChanged(nameof(TotalReceivedCountText));
         OnPropertyChanged(nameof(SelectedTopicMessageCountText));
+        OnPropertyChanged(nameof(AllMessagesResultCountText));
+        OnPropertyChanged(nameof(AllMessagesFilteredCountText));
+        OnPropertyChanged(nameof(VehicleFilterSummary));
+        OnPropertyChanged(nameof(MessageTypeFilterSummary));
         OnPropertyChanged(nameof(SelectedMessageJsonStatus));
         OnPropertyChanged(nameof(SelectedTopicDisplayText));
         if (TotalReceivedCount == 0)
@@ -493,6 +573,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             "SelectedMessage" => SelectedMessage is not null,
             "SelectedTopic" => SelectedTopic is not null && CurrentTopicMessages.Count > 0,
+            "FilteredAllMessages" => AllMessagesFilteredCount > 0,
             _ => TotalReceivedCount > 0
         };
     }
@@ -723,6 +804,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
 
         messageList.Add(message);
+        AllMessages.Add(message);
+        RebuildAllMessageFilterOptions();
 
         if (!_topicByName.TryGetValue(message.TopicName, out var topicSummary))
         {
@@ -748,6 +831,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         TotalReceivedCount += 1;
         LastReceivedAt = message.ReceivedAt;
+        RefreshAllMessagesViewState();
 
         if (updateStatus)
         {
@@ -1123,6 +1207,155 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
+    private void ApplyAllMessagesSorting()
+    {
+        using (AllMessagesView.DeferRefresh())
+        {
+            AllMessagesView.SortDescriptions.Clear();
+            AllMessagesView.SortDescriptions.Add(new SortDescription(nameof(ReceivedMessage.ReceivedAt), ListSortDirection.Descending));
+        }
+    }
+
+    private bool AllMessagesFilterPredicate(object item)
+    {
+        if (item is not ReceivedMessage message)
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(AllMessagesFilterText))
+        {
+            return MatchesSelectedAllMessageFilters(message);
+        }
+
+        return MatchesSelectedAllMessageFilters(message) &&
+               message.PayloadRaw.Contains(AllMessagesFilterText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void ClearAllMessagesFilter()
+    {
+        AllMessagesFilterText = string.Empty;
+        foreach (var option in VehicleFilterOptions.Concat(MessageTypeFilterOptions))
+        {
+            option.IsSelected = false;
+        }
+
+        IsVehicleFilterPopupOpen = false;
+        IsMessageTypeFilterPopupOpen = false;
+    }
+
+    private string BuildFilterSummary(HashSet<string> selectedValues)
+    {
+        return selectedValues.Count switch
+        {
+            0 => T("All"),
+            1 => selectedValues.First(),
+            _ => selectedValues.Count.ToString()
+        };
+    }
+
+    private bool HasAnyAllMessagesFilter()
+    {
+        return !string.IsNullOrWhiteSpace(AllMessagesFilterText) ||
+               _selectedVehicleFilters.Count > 0 ||
+               _selectedMessageTypeFilters.Count > 0;
+    }
+
+    private bool MatchesSelectedAllMessageFilters(ReceivedMessage message)
+    {
+        return (_selectedVehicleFilters.Count == 0 || _selectedVehicleFilters.Contains(message.VehicleKey)) &&
+               (_selectedMessageTypeFilters.Count == 0 || _selectedMessageTypeFilters.Contains(message.MessageType));
+    }
+
+    private void RebuildAllMessageFilterOptions()
+    {
+        var selectedVehicles = VehicleFilterOptions
+            .Where(option => option.IsSelected)
+            .Select(option => option.Value)
+            .ToHashSet(StringComparer.Ordinal);
+        var selectedMessageTypes = MessageTypeFilterOptions
+            .Where(option => option.IsSelected)
+            .Select(option => option.Value)
+            .ToHashSet(StringComparer.Ordinal);
+
+        ReplaceFilterOptions(
+            VehicleFilterOptions,
+            AllMessages
+                .GroupBy(message => message.VehicleKey, StringComparer.Ordinal)
+                .OrderBy(group => group.Key)
+                .Select(group => new MessageFilterOption(group.Key, group.Count())),
+            selectedVehicles);
+
+        ReplaceFilterOptions(
+            MessageTypeFilterOptions,
+            AllMessages
+                .GroupBy(message => message.MessageType, StringComparer.Ordinal)
+                .OrderBy(group => group.Key)
+                .Select(group => new MessageFilterOption(group.Key, group.Count())),
+            selectedMessageTypes);
+
+        RebuildSelectedAllMessageFilterSets();
+        RefreshAllMessagesViewState();
+    }
+
+    private void ReplaceFilterOptions(
+        ObservableCollection<MessageFilterOption> target,
+        IEnumerable<MessageFilterOption> source,
+        HashSet<string> selectedValues)
+    {
+        foreach (var option in target)
+        {
+            option.PropertyChanged -= OnAllMessageFilterOptionPropertyChanged;
+        }
+
+        target.Clear();
+
+        foreach (var option in source)
+        {
+            option.IsSelected = selectedValues.Contains(option.Value);
+            option.PropertyChanged += OnAllMessageFilterOptionPropertyChanged;
+            target.Add(option);
+        }
+    }
+
+    private void OnAllMessageFilterOptionPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(MessageFilterOption.IsSelected))
+        {
+            return;
+        }
+
+        RebuildSelectedAllMessageFilterSets();
+        RefreshAllMessagesViewState();
+    }
+
+    private void RebuildSelectedAllMessageFilterSets()
+    {
+        _selectedVehicleFilters.Clear();
+        foreach (var option in VehicleFilterOptions.Where(option => option.IsSelected))
+        {
+            _selectedVehicleFilters.Add(option.Value);
+        }
+
+        _selectedMessageTypeFilters.Clear();
+        foreach (var option in MessageTypeFilterOptions.Where(option => option.IsSelected))
+        {
+            _selectedMessageTypeFilters.Add(option.Value);
+        }
+    }
+
+    private void RefreshAllMessagesViewState()
+    {
+        AllMessagesView.Refresh();
+        OnPropertyChanged(nameof(AllMessagesFilteredCount));
+        OnPropertyChanged(nameof(AllMessagesResultCountText));
+        OnPropertyChanged(nameof(AllMessagesFilteredCountText));
+        OnPropertyChanged(nameof(VehicleFilterSummary));
+        OnPropertyChanged(nameof(MessageTypeFilterSummary));
+        ClearAllMessagesFilterCommand.RaiseCanExecuteChanged();
+        ExportCommand.RaiseCanExecuteChanged();
+    }
+
     private void TriggerTopicHighlight(TopicSummary topicSummary)
     {
         if (_highlightByTopic.TryGetValue(topicSummary.TopicName, out var previousTokenSource))
@@ -1224,6 +1457,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         if (_messagesByTopic.TryGetValue(topicName, out var removedMessages))
         {
             TotalReceivedCount = Math.Max(0, TotalReceivedCount - removedMessages.Count);
+            foreach (var message in removedMessages)
+            {
+                AllMessages.Remove(message);
+            }
+
             removedMessages.Clear();
         }
         else
@@ -1252,6 +1490,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         SelectedMessageDiffSummary = T("StatusNoMessageSelected");
         RecalculateLastReceivedAt();
         TopicsView.Refresh();
+        RebuildAllMessageFilterOptions();
         OnPropertyChanged(nameof(SelectedTopicMessageCount));
         OnPropertyChanged(nameof(SelectedTopicMessageCountText));
         StatusText = TF("StatusClearedTopic", topicName);
@@ -1282,6 +1521,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
 
         TotalReceivedCount = Math.Max(0, TotalReceivedCount - 1);
+        AllMessages.Remove(selectedMessage);
 
         if (SelectedTopic?.TopicName == selectedMessage.TopicName)
         {
@@ -1324,6 +1564,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         SelectedMessageDiffSummary = T("StatusNoMessageSelected");
         RecalculateLastReceivedAt();
         TopicsView.Refresh();
+        RebuildAllMessageFilterOptions();
         StatusText = T("StatusClearedMessage");
         UpdateCommandState();
     }
@@ -1341,6 +1582,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         _topicByName.Clear();
         Topics.Clear();
         CurrentTopicMessages.Clear();
+        AllMessages.Clear();
         JsonTreeNodes.Clear();
         _rawJsonTreeNodes.Clear();
         SelectedMessageDiffLines.Clear();
@@ -1349,6 +1591,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         SelectedMessageDiffSummary = T("StatusNoMessageSelected");
         TotalReceivedCount = 0;
         LastReceivedAt = null;
+        AllMessagesFilterText = string.Empty;
+        RebuildAllMessageFilterOptions();
     }
 
     private static async Task<List<ReceivedMessage>> LoadMessagesFromFileAsync(string filePath)
@@ -1553,7 +1797,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             "SelectedMessage" when SelectedMessage is not null => [SelectedMessage],
             "SelectedTopic" when SelectedTopic is not null && _messagesByTopic.TryGetValue(SelectedTopic.TopicName, out var topicMessages) => topicMessages,
-            _ => _messagesByTopic.Values.SelectMany(messages => messages).OrderBy(message => message.ReceivedAt)
+            "FilteredAllMessages" => AllMessagesView.Cast<ReceivedMessage>(),
+            _ => AllMessages.OrderBy(message => message.ReceivedAt)
         };
     }
 
@@ -1567,6 +1812,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         ClearAllCommand.RaiseCanExecuteChanged();
         ClearSelectedTopicCommand.RaiseCanExecuteChanged();
         ClearSelectedMessageCommand.RaiseCanExecuteChanged();
+        ClearAllMessagesFilterCommand.RaiseCanExecuteChanged();
         ExportCommand.RaiseCanExecuteChanged();
         CopyRawCommand.RaiseCanExecuteChanged();
         CopyPrettyCommand.RaiseCanExecuteChanged();

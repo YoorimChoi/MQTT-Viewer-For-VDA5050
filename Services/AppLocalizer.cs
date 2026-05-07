@@ -41,6 +41,8 @@ public sealed class AppLocalizer : ObservableObject
                 ["Size"] = "Size",
                 ["Retain"] = "Retain",
                 ["Preview"] = "Preview",
+                ["Vehicle"] = "Vehicle",
+                ["MessageType"] = "Message Type",
                 ["MessageDetail"] = "Message Detail",
                 ["CopyRaw"] = "Copy Raw",
                 ["CopyPretty"] = "Copy Pretty",
@@ -125,7 +127,20 @@ public sealed class AppLocalizer : ObservableObject
                 ["SortOldestFirst"] = "Oldest First",
                 ["ExportSelectedMessage"] = "Selected Message",
                 ["ExportSelectedTopic"] = "Selected Topic",
-                ["ExportAllTopics"] = "All Topics"
+                ["ExportFilteredAllMessages"] = "Filtered All Messages",
+                ["ExportAllTopics"] = "All Topics",
+                ["SelectedTopicTab"] = "Selected Topic",
+                ["AllMessagesTab"] = "All Messages",
+                ["SearchAllMessages"] = "Search payload",
+                ["AllMessagesResultCount"] = "{0} / {1} messages",
+                ["AllMessagesFilteredCount"] = "Filtered: {0}",
+                ["Clear"] = "Clear",
+                ["All"] = "All",
+                ["AllVehicles"] = "All Vehicles",
+                ["AllMessageTypes"] = "All Types",
+                ["SelectedFilterCount"] = "{0}: {1} selected",
+                ["FilterVehicleTitle"] = "Vehicle Filter",
+                ["FilterMessageTypeTitle"] = "Message Type Filter"
             },
             ["ko"] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
@@ -160,6 +175,8 @@ public sealed class AppLocalizer : ObservableObject
                 ["Size"] = "크기",
                 ["Retain"] = "Retain",
                 ["Preview"] = "미리보기",
+                ["Vehicle"] = "Vehicle",
+                ["MessageType"] = "메시지 타입",
                 ["MessageDetail"] = "메시지 상세",
                 ["CopyRaw"] = "원본 복사",
                 ["CopyPretty"] = "정리본 복사",
@@ -244,7 +261,20 @@ public sealed class AppLocalizer : ObservableObject
                 ["SortOldestFirst"] = "오래된순",
                 ["ExportSelectedMessage"] = "선택 메시지",
                 ["ExportSelectedTopic"] = "선택 토픽",
-                ["ExportAllTopics"] = "전체 토픽"
+                ["ExportFilteredAllMessages"] = "필터된 전체 메시지",
+                ["ExportAllTopics"] = "전체 토픽",
+                ["SelectedTopicTab"] = "선택 토픽",
+                ["AllMessagesTab"] = "전체 메시지",
+                ["SearchAllMessages"] = "Payload 검색",
+                ["AllMessagesResultCount"] = "{0} / {1} messages",
+                ["AllMessagesFilteredCount"] = "필터링: {0}",
+                ["Clear"] = "초기화",
+                ["All"] = "전체",
+                ["AllVehicles"] = "전체 Vehicle",
+                ["AllMessageTypes"] = "전체 타입",
+                ["SelectedFilterCount"] = "{0}: {1}개 선택",
+                ["FilterVehicleTitle"] = "Vehicle 필터",
+                ["FilterMessageTypeTitle"] = "메시지 타입 필터"
             }
         };
 
