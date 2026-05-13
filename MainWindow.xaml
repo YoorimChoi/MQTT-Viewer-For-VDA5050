@@ -1,7 +1,9 @@
 <Window x:Class="MqttViewer.MainWindow"
+        x:Name="RootWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:infra="clr-namespace:MqttViewer.Infrastructure"
         xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
         xmlns:models="clr-namespace:MqttViewer.Models"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -15,6 +17,9 @@
         Background="{DynamicResource MaterialDesignPaper}"
         Style="{StaticResource MaterialDesignWindow}">
     <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+        <infra:BindingProxy x:Key="ViewModelProxy" Data="{Binding}" />
+
         <Style x:Key="JsonTreeExpanderToggleStyle" TargetType="{x:Type ToggleButton}">
             <Setter Property="Focusable" Value="False" />
             <Setter Property="Width" Value="12" />
@@ -45,6 +50,61 @@
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+        </Style>
+
+        <Style x:Key="MessageGridCellStyle" TargetType="{x:Type DataGridCell}">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Padding" Value="8,0" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Foreground" Value="#0F172A" />
+                    <Setter Property="Background" Value="#DBEAFE" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="MessageGridHeaderStyle" TargetType="{x:Type DataGridColumnHeader}">
+            <Setter Property="Background" Value="#F8FAFC" />
+            <Setter Property="BorderBrush" Value="#E5E7EB" />
+            <Setter Property="BorderThickness" Value="0,0,0,1" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="#475569" />
+            <Setter Property="Padding" Value="8,0" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        </Style>
+
+        <Style x:Key="MessageGridRowStyle" TargetType="{x:Type DataGridRow}">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="#0F172A" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#F1F5F9" />
+                </Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#DBEAFE" />
+                    <Setter Property="Foreground" Value="#0F172A" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="MessageGridTextStyle" TargetType="{x:Type TextBlock}">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+
+        <Style x:Key="MessageGridCheckBoxStyle" TargetType="{x:Type CheckBox}">
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="Padding" Value="0" />
         </Style>
 
         <Style x:Key="JsonTreeItemContainerStyle" TargetType="{x:Type TreeViewItem}">
@@ -86,9 +146,9 @@
                             <Trigger Property="IsExpanded" Value="False">
                                 <Setter TargetName="ItemsHost" Property="Visibility" Value="Collapsed" />
                             </Trigger>
-                            <Trigger Property="HasItems" Value="False">
+                            <DataTrigger Binding="{Binding HasChildren}" Value="False">
                                 <Setter TargetName="Expander" Property="Visibility" Value="Hidden" />
-                            </Trigger>
+                            </DataTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -698,6 +758,9 @@
                                         Margin="12,0,0,0"
                                         Orientation="Horizontal">
                                 <Button Margin="0,0,8,0"
+                                        Command="{Binding OpenPublishDialogCommand}"
+                                        Content="{Binding Localizer[Publish]}" />
+                                <Button Margin="0,0,8,0"
                                         Command="{Binding ConnectCommand}"
                                         Content="{Binding Localizer[Connect]}" />
                                 <Button Command="{Binding DisconnectCommand}"
@@ -798,6 +861,18 @@
                                 Margin="0,0,8,0"
                                 Command="{Binding ExportCommand}"
                                 Content="{Binding Localizer[Export]}" />
+                        <CheckBox Grid.Column="2"
+                                  Margin="8,0,8,0"
+                                  VerticalAlignment="Center"
+                                  Content="{Binding Localizer[SelectionMode]}"
+                                  IsChecked="{Binding IsSelectionMode, Mode=TwoWay}" />
+                        <TextBlock Grid.Column="3"
+                                   VerticalAlignment="Center"
+                                   FontSize="12"
+                                   FontWeight="SemiBold"
+                                   Opacity="0.72"
+                                   Text="{Binding SelectedMessagesCountText}"
+                                   Visibility="{Binding IsSelectionMode, Converter={StaticResource BooleanToVisibilityConverter}}" />
                     </Grid>
                 </Grid>
             </materialDesign:Card>
@@ -984,6 +1059,7 @@
                         <Grid Margin="0,14,0,0">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
 
@@ -1017,36 +1093,87 @@
                                 <Button Grid.Column="2"
                                         Margin="12,0,0,0"
                                         Command="{Binding ClearSelectedMessageCommand}"
-                                        Content="{Binding Localizer[ClearMessage]}" />
+                                        Content="{Binding Localizer[ClearCurrentMessage]}" />
                             </Grid>
 
-                            <DataGrid Grid.Row="1"
+                            <Border Grid.Row="1"
+                                    Margin="0,0,0,12"
+                                    Padding="10,8"
+                                    Background="#F8FAFC"
+                                    BorderBrush="#E5E7EB"
+                                    BorderThickness="1"
+                                    CornerRadius="8"
+                                    Visibility="{Binding IsSelectionMode, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <DockPanel LastChildFill="False">
+                                    <TextBlock VerticalAlignment="Center"
+                                               FontSize="12"
+                                               FontWeight="SemiBold"
+                                               Text="{Binding SelectedMessagesCountText}" />
+                                    <StackPanel DockPanel.Dock="Right"
+                                                Orientation="Horizontal">
+                                        <Button Margin="0,0,8,0"
+                                                Command="{Binding ClearMessageSelectionCommand}"
+                                                Content="{Binding Localizer[ClearSelection]}" />
+                                        <Button Command="{Binding ClearSelectedMessagesCommand}"
+                                                Content="{Binding Localizer[ClearSelectedMessages]}" />
+                                    </StackPanel>
+                                </DockPanel>
+                            </Border>
+
+                            <DataGrid Grid.Row="2"
                                       AutoGenerateColumns="False"
+                                      Background="Transparent"
+                                      BorderThickness="0"
                                       CanUserAddRows="False"
+                                      ColumnHeaderHeight="34"
+                                      GridLinesVisibility="Horizontal"
+                                      HorizontalGridLinesBrush="#E5E7EB"
                                       HeadersVisibility="Column"
                                       IsReadOnly="True"
                                       ItemsSource="{Binding MessagesView}"
+                                      RowHeight="30"
                                       SelectedItem="{Binding SelectedMessage}"
                                       SelectionMode="Single"
                                       SelectionUnit="FullRow"
                                       VirtualizingPanel.IsVirtualizing="True"
                                       VirtualizingPanel.VirtualizationMode="Recycling">
+                                <DataGrid.Resources>
+                                    <Style TargetType="{x:Type DataGridCell}" BasedOn="{StaticResource MessageGridCellStyle}" />
+                                    <Style TargetType="{x:Type DataGridColumnHeader}" BasedOn="{StaticResource MessageGridHeaderStyle}" />
+                                    <Style TargetType="{x:Type DataGridRow}" BasedOn="{StaticResource MessageGridRowStyle}" />
+                                </DataGrid.Resources>
                                 <DataGrid.Columns>
+                                    <DataGridTemplateColumn Width="{Binding Data.SelectionColumnWidth, Source={StaticResource ViewModelProxy}}">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Grid HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center">
+                                                    <CheckBox Style="{StaticResource MessageGridCheckBoxStyle}"
+                                                              IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              Visibility="{Binding DataContext.IsSelectionMode, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
                                     <DataGridTextColumn x:Name="ReceivedAtColumn"
                                                         Binding="{Binding ReceivedAt, Mode=OneWay, StringFormat={}{0:HH:mm:ss.fff}}"
-                                                        Header="Received At"
+                                                        ElementStyle="{StaticResource MessageGridTextStyle}"
+                                                        Header="{Binding Data.Localizer[ReceivedAt], Source={StaticResource ViewModelProxy}}"
                                                         Width="140" />
                                     <DataGridTextColumn x:Name="SizeColumn"
                                                         Binding="{Binding PayloadSize, Mode=OneWay}"
-                                                        Header="Size"
+                                                        ElementStyle="{StaticResource MessageGridTextStyle}"
+                                                        Header="{Binding Data.Localizer[Size], Source={StaticResource ViewModelProxy}}"
                                                         Width="65" />
                                     <DataGridCheckBoxColumn x:Name="RetainColumn"
                                                             Binding="{Binding Retain, Mode=OneWay}"
-                                                            Header="Retain"
+                                                            ElementStyle="{StaticResource MessageGridCheckBoxStyle}"
+                                                            Header="{Binding Data.Localizer[Retain], Source={StaticResource ViewModelProxy}}"
                                                             Width="70" />
                                     <DataGridTextColumn x:Name="PreviewColumn"
                                                         Binding="{Binding Preview, Mode=OneWay}"
-                                                        Header="Preview"
+                                                        ElementStyle="{StaticResource MessageGridTextStyle}"
+                                                        Header="{Binding Data.Localizer[Preview], Source={StaticResource ViewModelProxy}}"
                                                         Width="*" />
                                 </DataGrid.Columns>
                             </DataGrid>
@@ -1056,6 +1183,7 @@
                     <TabItem Header="{Binding Localizer[AllMessagesTab]}">
                         <Grid Margin="0,14,0,0">
                             <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
@@ -1068,12 +1196,10 @@
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
 
                                 <StackPanel Grid.Row="0"
-                                            Grid.ColumnSpan="4"
+                                            Grid.ColumnSpan="2"
                                             Margin="0,0,0,8"
                                             Orientation="Horizontal">
                                     <TextBlock Margin="0,0,8,0"
@@ -1176,7 +1302,7 @@
                                     </Border>
                                 </Popup>
 
-                                <Grid Grid.Row="1" Grid.ColumnSpan="4">
+                                <Grid Grid.Row="1" Grid.ColumnSpan="2">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
@@ -1194,7 +1320,31 @@
                                 </Grid>
                             </Grid>
 
-                            <DataGrid Grid.Row="1"
+                            <Border Grid.Row="1"
+                                    Margin="0,0,0,12"
+                                    Padding="10,8"
+                                    Background="#F8FAFC"
+                                    BorderBrush="#E5E7EB"
+                                    BorderThickness="1"
+                                    CornerRadius="8"
+                                    Visibility="{Binding IsSelectionMode, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <DockPanel LastChildFill="False">
+                                    <TextBlock VerticalAlignment="Center"
+                                               FontSize="12"
+                                               FontWeight="SemiBold"
+                                               Text="{Binding SelectedMessagesCountText}" />
+                                    <StackPanel DockPanel.Dock="Right"
+                                                Orientation="Horizontal">
+                                        <Button Margin="0,0,8,0"
+                                                Command="{Binding ClearMessageSelectionCommand}"
+                                                Content="{Binding Localizer[ClearSelection]}" />
+                                        <Button Command="{Binding ClearSelectedMessagesCommand}"
+                                                Content="{Binding Localizer[ClearSelectedMessages]}" />
+                                    </StackPanel>
+                                </DockPanel>
+                            </Border>
+
+                            <DataGrid Grid.Row="2"
                                       AutoGenerateColumns="False"
                                       Background="Transparent"
                                       BorderThickness="0"
@@ -1212,59 +1362,38 @@
                                       VirtualizingPanel.IsVirtualizing="True"
                                       VirtualizingPanel.VirtualizationMode="Recycling">
                                 <DataGrid.Resources>
-                                    <Style TargetType="{x:Type DataGridCell}">
-                                        <Setter Property="Background" Value="Transparent" />
-                                        <Setter Property="BorderBrush" Value="Transparent" />
-                                        <Setter Property="BorderThickness" Value="0" />
-                                        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
-                                        <Setter Property="Padding" Value="8,0" />
-                                        <Setter Property="VerticalContentAlignment" Value="Center" />
-                                        <Style.Triggers>
-                                            <Trigger Property="IsSelected" Value="True">
-                                                <Setter Property="Foreground" Value="#0F172A" />
-                                                <Setter Property="Background" Value="#DBEAFE" />
-                                            </Trigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                    <Style TargetType="{x:Type DataGridColumnHeader}">
-                                        <Setter Property="Background" Value="#F8FAFC" />
-                                        <Setter Property="BorderBrush" Value="#E5E7EB" />
-                                        <Setter Property="BorderThickness" Value="0,0,0,1" />
-                                        <Setter Property="FontSize" Value="12" />
-                                        <Setter Property="FontWeight" Value="SemiBold" />
-                                        <Setter Property="Foreground" Value="#475569" />
-                                        <Setter Property="Padding" Value="8,0" />
-                                        <Setter Property="HorizontalContentAlignment" Value="Left" />
-                                        <Setter Property="VerticalContentAlignment" Value="Center" />
-                                        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
-                                    </Style>
-                                    <Style TargetType="{x:Type DataGridRow}">
-                                        <Setter Property="Background" Value="Transparent" />
-                                        <Setter Property="Foreground" Value="#0F172A" />
-                                        <Setter Property="SnapsToDevicePixels" Value="True" />
-                                        <Style.Triggers>
-                                            <Trigger Property="IsMouseOver" Value="True">
-                                                <Setter Property="Background" Value="#F1F5F9" />
-                                            </Trigger>
-                                            <Trigger Property="IsSelected" Value="True">
-                                                <Setter Property="Background" Value="#DBEAFE" />
-                                                <Setter Property="Foreground" Value="#0F172A" />
-                                            </Trigger>
-                                        </Style.Triggers>
-                                    </Style>
+                                    <Style TargetType="{x:Type DataGridCell}" BasedOn="{StaticResource MessageGridCellStyle}" />
+                                    <Style TargetType="{x:Type DataGridColumnHeader}" BasedOn="{StaticResource MessageGridHeaderStyle}" />
+                                    <Style TargetType="{x:Type DataGridRow}" BasedOn="{StaticResource MessageGridRowStyle}" />
                                 </DataGrid.Resources>
                                 <DataGrid.Columns>
+                                    <DataGridTemplateColumn Width="{Binding Data.SelectionColumnWidth, Source={StaticResource ViewModelProxy}}">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Grid HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center">
+                                                    <CheckBox Style="{StaticResource MessageGridCheckBoxStyle}"
+                                                              IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              Visibility="{Binding DataContext.IsSelectionMode, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
                                     <DataGridTextColumn Binding="{Binding ReceivedAt, Mode=OneWay, StringFormat={}{0:HH:mm:ss.fff}}"
-                                                        Header="Received At"
+                                                        ElementStyle="{StaticResource MessageGridTextStyle}"
+                                                        Header="{Binding Data.Localizer[ReceivedAt], Source={StaticResource ViewModelProxy}}"
                                                         Width="115" />
                                     <DataGridTextColumn Binding="{Binding VehicleKey, Mode=OneWay}"
-                                                        Header="Vehicle"
+                                                        ElementStyle="{StaticResource MessageGridTextStyle}"
+                                                        Header="{Binding Data.Localizer[Vehicle], Source={StaticResource ViewModelProxy}}"
                                                         Width="180" />
                                     <DataGridTextColumn Binding="{Binding MessageType, Mode=OneWay}"
-                                                        Header="Message Type"
+                                                        ElementStyle="{StaticResource MessageGridTextStyle}"
+                                                        Header="{Binding Data.Localizer[MessageType], Source={StaticResource ViewModelProxy}}"
                                                         Width="120" />
                                     <DataGridTextColumn Binding="{Binding Preview, Mode=OneWay}"
-                                                        Header="Preview"
+                                                        ElementStyle="{StaticResource MessageGridTextStyle}"
+                                                        Header="{Binding Data.Localizer[Preview], Source={StaticResource ViewModelProxy}}"
                                                         Width="*" />
                                 </DataGrid.Columns>
                             </DataGrid>
@@ -1577,10 +1706,121 @@
                     <TextBlock Margin="0,0,16,0"
                                Text="{Binding SelectedTopicMessageCountText}" />
                     <TextBlock Margin="0,0,16,0"
+                               Text="{Binding SelectedMessagesCountText}"
+                               Visibility="{Binding IsSelectionMode, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                    <TextBlock Margin="0,0,16,0"
                                Text="{Binding AllMessagesFilteredCountText}" />
                     <TextBlock Text="{Binding LastReceivedAtText}" />
                 </StackPanel>
             </DockPanel>
         </materialDesign:Card>
+
+        <Border Grid.RowSpan="4"
+                Background="#660F172A"
+                Visibility="{Binding IsPublishDialogOpen, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <Grid>
+                <Border Width="520"
+                        MaxWidth="520"
+                        MaxHeight="720"
+                        Padding="18"
+                        Background="{DynamicResource MaterialDesignPaper}"
+                        BorderBrush="#D9E2F2"
+                        BorderThickness="1"
+                        CornerRadius="12"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Width="18"
+                                                     Height="18"
+                                                     Margin="0,0,8,0"
+                                                     VerticalAlignment="Center"
+                                                     Kind="Send" />
+                            <TextBlock VerticalAlignment="Center"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       Text="{Binding Localizer[PublishDialogTitle]}" />
+                        </StackPanel>
+
+                        <ScrollViewer Grid.Row="1"
+                                      Margin="0,14,0,0"
+                                      VerticalScrollBarVisibility="Auto">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBox Grid.Row="0"
+                                         Margin="0,0,0,10"
+                                         materialDesign:HintAssist.Hint="{Binding Localizer[Topic]}"
+                                         Text="{Binding PublishTopic, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <Grid Grid.Row="1" Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="140" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <ComboBox Grid.Column="0"
+                                              Margin="0,0,12,0"
+                                              materialDesign:HintAssist.Hint="{Binding Localizer[Qos]}"
+                                              ItemsSource="{Binding PublishQosOptions}"
+                                              SelectedValue="{Binding SelectedPublishQos}"
+                                              SelectedValuePath="Value"
+                                              DisplayMemberPath="Display" />
+
+                                    <CheckBox Grid.Column="1"
+                                              VerticalAlignment="Center"
+                                              Content="{Binding Localizer[Retain]}"
+                                              IsChecked="{Binding PublishRetain, Mode=TwoWay}" />
+                                </Grid>
+
+                                <TextBox Grid.Row="2"
+                                         Margin="0,0,0,10"
+                                         MinHeight="180"
+                                         MaxHeight="360"
+                                         AcceptsReturn="True"
+                                         VerticalScrollBarVisibility="Auto"
+                                         TextWrapping="Wrap"
+                                         materialDesign:HintAssist.Hint="{Binding Localizer[Payload]}"
+                                         Text="{Binding PublishPayload, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="3"
+                                           Opacity="0.7"
+                                           Text="{Binding Localizer[PublishHint]}"
+                                           TextWrapping="Wrap" />
+                            </Grid>
+                        </ScrollViewer>
+
+                        <DockPanel Grid.Row="2"
+                                   Margin="0,16,0,0"
+                                   LastChildFill="False">
+                            <Border DockPanel.Dock="Top"
+                                    Height="1"
+                                    Margin="0,0,0,12"
+                                    Background="#E5E7EB"
+                                    VerticalAlignment="Top" />
+                            <StackPanel HorizontalAlignment="Right"
+                                        Orientation="Horizontal">
+                            <Button Margin="0,0,8,0"
+                                    Command="{Binding ClosePublishDialogCommand}"
+                                    Content="{Binding Localizer[Cancel]}" />
+                            <Button Command="{Binding PublishCommand}"
+                                    Content="{Binding Localizer[Publish]}" />
+                            </StackPanel>
+                        </DockPanel>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Border>
     </Grid>
 </Window>

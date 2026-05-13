@@ -4,6 +4,7 @@ using System.IO;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Threading;
 using Microsoft.Win32;
@@ -37,6 +38,12 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private string _allMessagesFilterText = string.Empty;
     private bool _isVehicleFilterPopupOpen;
     private bool _isMessageTypeFilterPopupOpen;
+    private bool _isPublishDialogOpen;
+    private bool _isSelectionMode;
+    private string _publishTopic = string.Empty;
+    private string _publishPayload = string.Empty;
+    private string _selectedPublishQos = "0";
+    private bool _publishRetain;
     private ConnectionStatus _connectionStatus = ConnectionStatus.Disconnected;
     private string _statusText = string.Empty;
     private string _sessionSourceText = string.Empty;
@@ -98,9 +105,16 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         ExportScopes = new ObservableCollection<SelectionOption>
         {
             new("SelectedMessage", "ExportSelectedMessage"),
+            new("SelectedMessages", "ExportSelectedMessages"),
             new("SelectedTopic", "ExportSelectedTopic"),
             new("FilteredAllMessages", "ExportFilteredAllMessages"),
             new("AllTopics", "ExportAllTopics")
+        };
+        PublishQosOptions = new ObservableCollection<SelectionOption>
+        {
+            new("0", "PublishQos0"),
+            new("1", "PublishQos1"),
+            new("2", "PublishQos2")
         };
         JsonTreeNodes = new ObservableCollection<JsonTreeNode>();
         SelectedMessageDiffLines = new ObservableCollection<DiffLine>();
@@ -113,10 +127,15 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         ClearAllCommand = new RelayCommand(ClearAllMessages, () => TotalReceivedCount > 0);
         ClearSelectedTopicCommand = new RelayCommand(ClearSelectedTopicMessages, () => SelectedTopic is not null);
         ClearSelectedMessageCommand = new RelayCommand(ClearSelectedMessage, () => SelectedMessage is not null);
+        ClearSelectedMessagesCommand = new RelayCommand(ClearSelectedMessages, HasSelectedMessages);
+        ClearMessageSelectionCommand = new RelayCommand(ClearMessageSelection, HasSelectedMessages);
         ClearAllMessagesFilterCommand = new RelayCommand(ClearAllMessagesFilter, HasAnyAllMessagesFilter);
         ToggleVehicleFilterPopupCommand = new RelayCommand(() => IsVehicleFilterPopupOpen = !IsVehicleFilterPopupOpen);
         ToggleMessageTypeFilterPopupCommand = new RelayCommand(() => IsMessageTypeFilterPopupOpen = !IsMessageTypeFilterPopupOpen);
+        OpenPublishDialogCommand = new RelayCommand(OpenPublishDialog, CanOpenPublishDialog);
+        ClosePublishDialogCommand = new RelayCommand(ClosePublishDialog);
         ExportCommand = new AsyncRelayCommand(ExportAsync, CanExport);
+        PublishCommand = new AsyncRelayCommand(PublishAsync, CanPublish);
         CopyRawCommand = new RelayCommand(CopyRawPayload, () => SelectedMessage is not null);
         CopyPrettyCommand = new RelayCommand(CopyPrettyPayload, () => SelectedMessage is not null);
         CopyFullCommand = new RelayCommand(CopyMessageWithMetadata, () => SelectedMessage is not null);
@@ -162,6 +181,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     public ObservableCollection<SelectionOption> MessageSortModes { get; }
 
     public ObservableCollection<SelectionOption> ExportScopes { get; }
+
+    public ObservableCollection<SelectionOption> PublishQosOptions { get; }
 
     public ObservableCollection<JsonTreeNode> JsonTreeNodes { get; }
 
@@ -286,6 +307,64 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
             ExportCommand.RaiseCanExecuteChanged();
         }
+    }
+
+    public bool IsSelectionMode
+    {
+        get => _isSelectionMode;
+        set
+        {
+            if (!SetProperty(ref _isSelectionMode, value))
+            {
+                return;
+            }
+
+            if (!value)
+            {
+                ClearMessageSelection();
+            }
+
+            OnPropertyChanged(nameof(SelectionColumnWidth));
+            UpdateCommandState();
+        }
+    }
+
+    public bool IsPublishDialogOpen
+    {
+        get => _isPublishDialogOpen;
+        set => SetProperty(ref _isPublishDialogOpen, value);
+    }
+
+    public string PublishTopic
+    {
+        get => _publishTopic;
+        set
+        {
+            if (!SetProperty(ref _publishTopic, value))
+            {
+                return;
+            }
+
+            PublishCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    public string PublishPayload
+    {
+        get => _publishPayload;
+        set => SetProperty(ref _publishPayload, value);
+    }
+
+    public string SelectedPublishQos
+    {
+        get => _selectedPublishQos;
+        set => SetProperty(ref _selectedPublishQos, value);
+    }
+
+    public bool PublishRetain
+    {
+        get => _publishRetain;
+        set => SetProperty(ref _publishRetain, value);
     }
 
     public string AllMessagesFilterText
@@ -440,6 +519,12 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public string AllMessagesFilteredCountText => TF("AllMessagesFilteredCount", AllMessagesFilteredCount);
 
+    public int SelectedMessagesCount => AllMessages.Count(message => message.IsSelected);
+
+    public string SelectedMessagesCountText => TF("CheckedMessagesLabel", SelectedMessagesCount);
+
+    public DataGridLength SelectionColumnWidth => IsSelectionMode ? new DataGridLength(44) : new DataGridLength(0);
+
     public string VehicleFilterSummary => BuildFilterSummary(_selectedVehicleFilters);
 
     public string MessageTypeFilterSummary => BuildFilterSummary(_selectedMessageTypeFilters);
@@ -502,13 +587,23 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public RelayCommand ClearSelectedMessageCommand { get; }
 
+    public RelayCommand ClearSelectedMessagesCommand { get; }
+
+    public RelayCommand ClearMessageSelectionCommand { get; }
+
     public RelayCommand ClearAllMessagesFilterCommand { get; }
 
     public RelayCommand ToggleVehicleFilterPopupCommand { get; }
 
     public RelayCommand ToggleMessageTypeFilterPopupCommand { get; }
 
+    public RelayCommand OpenPublishDialogCommand { get; }
+
+    public RelayCommand ClosePublishDialogCommand { get; }
+
     public AsyncRelayCommand ExportCommand { get; }
+
+    public AsyncRelayCommand PublishCommand { get; }
 
     public RelayCommand CopyRawCommand { get; }
 
@@ -544,6 +639,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(SelectedTopicMessageCountText));
         OnPropertyChanged(nameof(AllMessagesResultCountText));
         OnPropertyChanged(nameof(AllMessagesFilteredCountText));
+        OnPropertyChanged(nameof(SelectedMessagesCountText));
+        OnPropertyChanged(nameof(SelectionColumnWidth));
         OnPropertyChanged(nameof(VehicleFilterSummary));
         OnPropertyChanged(nameof(MessageTypeFilterSummary));
         OnPropertyChanged(nameof(SelectedMessageJsonStatus));
@@ -567,16 +664,21 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private bool CanImport() => IsImportedSession && _connectionStatus != ConnectionStatus.Connecting;
 
+    private bool CanOpenPublishDialog() => !IsImportedSession && IsConnected;
+
     private bool CanExport()
     {
         return SelectedExportScope switch
         {
             "SelectedMessage" => SelectedMessage is not null,
+            "SelectedMessages" => IsSelectionMode && SelectedMessagesCount > 0,
             "SelectedTopic" => SelectedTopic is not null && CurrentTopicMessages.Count > 0,
             "FilteredAllMessages" => AllMessagesFilteredCount > 0,
             _ => TotalReceivedCount > 0
         };
     }
+
+    private bool CanPublish() => !IsImportedSession && IsConnected && !string.IsNullOrWhiteSpace(PublishTopic);
 
     private bool CanManipulateJsonTree() => SelectedMessage?.IsJson == true && _rawJsonTreeNodes.Count > 0;
 
@@ -618,12 +720,27 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         try
         {
             await _mqttMonitorService.DisconnectAsync();
+            IsPublishDialogOpen = false;
             StatusText = T("StatusDisconnected");
         }
         catch (Exception ex)
         {
             StatusText = TF("StatusDisconnectFailed", ex.Message);
         }
+    }
+
+    private void OpenPublishDialog()
+    {
+        PublishTopic = SelectedMessage?.TopicName ?? string.Empty;
+        PublishPayload = SelectedMessage?.PayloadRaw ?? string.Empty;
+        SelectedPublishQos = SelectedMessage?.Qos.ToString() ?? "0";
+        PublishRetain = SelectedMessage?.Retain ?? false;
+        IsPublishDialogOpen = true;
+    }
+
+    private void ClosePublishDialog()
+    {
+        IsPublishDialogOpen = false;
     }
 
     private async Task ImportAsync()
@@ -797,6 +914,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void AddMessageToSession(ReceivedMessage message, bool highlightTopic, bool updateStatus)
     {
+        message.PropertyChanged += OnMessagePropertyChanged;
+
         if (!_messagesByTopic.TryGetValue(message.TopicName, out var messageList))
         {
             messageList = [];
@@ -847,6 +966,25 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         TopicsView.Refresh();
         UpdateCommandState();
+    }
+
+    private void OnMessagePropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(ReceivedMessage.IsSelected))
+        {
+            return;
+        }
+
+        OnSelectedMessagesChanged();
+    }
+
+    private void OnSelectedMessagesChanged()
+    {
+        OnPropertyChanged(nameof(SelectedMessagesCount));
+        OnPropertyChanged(nameof(SelectedMessagesCountText));
+        ClearSelectedMessagesCommand.RaiseCanExecuteChanged();
+        ClearMessageSelectionCommand.RaiseCanExecuteChanged();
+        ExportCommand.RaiseCanExecuteChanged();
     }
 
     private static (bool IsJson, string? PrettyJson) TryPrettyJson(string payload)
@@ -905,8 +1043,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         try
         {
             using var document = JsonDocument.Parse(SelectedMessage.PayloadRaw);
-            _rawJsonTreeNodes.Add(BuildJsonTreeNode("$", document.RootElement));
-            ApplyJsonTreeFilter();
+            _rawJsonTreeNodes.Add(CreateJsonTreeNode("$", document.RootElement, isExpanded: true, lazyLoadChildren: true));
+            CollapseJsonTreeToRoot();
         }
         catch
         {
@@ -915,12 +1053,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
-    private static JsonTreeNode BuildJsonTreeNode(string key, JsonElement element)
+    private JsonTreeNode CreateJsonTreeNode(string key, JsonElement element, bool isExpanded, bool lazyLoadChildren)
     {
         var node = new JsonTreeNode
         {
             Key = key,
-            IsExpanded = true,
             ValueKind = element.ValueKind.ToString()
         };
 
@@ -928,20 +1065,10 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             case JsonValueKind.Object:
                 node.Value = "{ }";
-                foreach (var property in element.EnumerateObject())
-                {
-                    node.Children.Add(BuildJsonTreeNode(property.Name, property.Value));
-                }
                 break;
 
             case JsonValueKind.Array:
                 node.Value = $"[{element.GetArrayLength()}]";
-                var index = 0;
-                foreach (var arrayItem in element.EnumerateArray())
-                {
-                    node.Children.Add(BuildJsonTreeNode($"[{index}]", arrayItem));
-                    index++;
-                }
                 break;
 
             case JsonValueKind.String:
@@ -966,7 +1093,44 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 break;
         }
 
+        node.ConfigureSource(element, lazyLoadChildren, lazyLoadChildren ? PopulateJsonTreeChildren : null);
+        if (!lazyLoadChildren)
+        {
+            PopulateJsonTreeChildren(node);
+        }
+
+        node.IsExpanded = isExpanded;
         return node;
+    }
+
+    private void PopulateJsonTreeChildren(JsonTreeNode node)
+    {
+        if (node.Children.Count > 0)
+        {
+            node.MarkChildrenLoaded();
+            return;
+        }
+
+        switch (node.SourceElement.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var property in node.SourceElement.EnumerateObject())
+                {
+                    node.Children.Add(CreateJsonTreeNode(property.Name, property.Value, isExpanded: false, lazyLoadChildren: true));
+                }
+                break;
+
+            case JsonValueKind.Array:
+                var index = 0;
+                foreach (var arrayItem in node.SourceElement.EnumerateArray())
+                {
+                    node.Children.Add(CreateJsonTreeNode($"[{index}]", arrayItem, isExpanded: false, lazyLoadChildren: true));
+                    index++;
+                }
+                break;
+        }
+
+        node.MarkChildrenLoaded();
     }
 
     private void ApplyJsonTreeFilter()
@@ -999,43 +1163,21 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
-    private static JsonTreeNode CloneSubtree(JsonTreeNode source)
-    {
-        var clone = new JsonTreeNode
-        {
-            Key = source.Key,
-            Value = source.Value,
-            ValueKind = source.ValueKind,
-            IsExpanded = source.IsExpanded,
-            IsMatch = false
-        };
-
-        foreach (var child in source.Children)
-        {
-            clone.Children.Add(CloneSubtree(child));
-        }
-
-        return clone;
-    }
-
-    private static JsonTreeNode? FilterSubtree(JsonTreeNode source, string query)
+    private JsonTreeNode? FilterSubtree(JsonTreeNode source, string query)
     {
         var isMatch =
             source.Key.Contains(query, StringComparison.OrdinalIgnoreCase) ||
             source.Value.Contains(query, StringComparison.OrdinalIgnoreCase);
 
-        var filteredNode = new JsonTreeNode
-        {
-            Key = source.Key,
-            Value = source.Value,
-            ValueKind = source.ValueKind,
-            IsExpanded = true,
-            IsMatch = isMatch
-        };
+        var filteredNode = CreateJsonTreeNode(source.Key, source.SourceElement, isExpanded: true, lazyLoadChildren: true);
+        filteredNode.IsMatch = isMatch;
+        filteredNode.Children.Clear();
+        filteredNode.MarkChildrenLoaded();
 
-        foreach (var child in source.Children)
+        foreach (var (childKey, childElement) in EnumerateJsonChildren(source.SourceElement))
         {
-            var filteredChild = FilterSubtree(child, query);
+            var childNode = CreateJsonTreeNode(childKey, childElement, isExpanded: false, lazyLoadChildren: true);
+            var filteredChild = FilterSubtree(childNode, query);
             if (filteredChild is not null)
             {
                 filteredNode.Children.Add(filteredChild);
@@ -1075,6 +1217,31 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         foreach (var child in node.Children)
         {
             SetJsonTreeExpanded(child, isExpanded);
+        }
+    }
+
+    private static IEnumerable<(string Key, JsonElement Element)> EnumerateJsonChildren(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                yield return (property.Name, property.Value);
+            }
+
+            yield break;
+        }
+
+        if (element.ValueKind != JsonValueKind.Array)
+        {
+            yield break;
+        }
+
+        var index = 0;
+        foreach (var arrayItem in element.EnumerateArray())
+        {
+            yield return ($"[{index}]", arrayItem);
+            index++;
         }
     }
 
@@ -1459,6 +1626,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             TotalReceivedCount = Math.Max(0, TotalReceivedCount - removedMessages.Count);
             foreach (var message in removedMessages)
             {
+                message.PropertyChanged -= OnMessagePropertyChanged;
                 AllMessages.Remove(message);
             }
 
@@ -1493,59 +1661,108 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         RebuildAllMessageFilterOptions();
         OnPropertyChanged(nameof(SelectedTopicMessageCount));
         OnPropertyChanged(nameof(SelectedTopicMessageCountText));
+        OnSelectedMessagesChanged();
         StatusText = TF("StatusClearedTopic", topicName);
         UpdateCommandState();
     }
 
     private void ClearSelectedMessage()
     {
-        if (SelectedMessage is null || !_messagesByTopic.TryGetValue(SelectedMessage.TopicName, out var topicMessages))
+        if (SelectedMessage is null)
         {
             return;
         }
 
         var selectedMessage = SelectedMessage;
-        var removed = topicMessages.Remove(selectedMessage);
+        if (!RemoveMessageFromSession(selectedMessage))
+        {
+            return;
+        }
+
+        FinishMessageRemoval();
+        StatusText = T("StatusClearedMessage");
+    }
+
+    private void ClearSelectedMessages()
+    {
+        var selectedMessages = AllMessages.Where(message => message.IsSelected).ToList();
+        if (selectedMessages.Count == 0)
+        {
+            return;
+        }
+
+        var removedCount = 0;
+        foreach (var message in selectedMessages)
+        {
+            if (RemoveMessageFromSession(message))
+            {
+                removedCount += 1;
+            }
+        }
+
+        FinishMessageRemoval();
+        StatusText = TF("StatusClearedSelectedMessages", removedCount);
+    }
+
+    private void ClearMessageSelection()
+    {
+        foreach (var message in AllMessages.Where(message => message.IsSelected).ToList())
+        {
+            message.IsSelected = false;
+        }
+    }
+
+    private bool HasSelectedMessages() => IsSelectionMode && SelectedMessagesCount > 0;
+
+    private bool RemoveMessageFromSession(ReceivedMessage message)
+    {
+        if (!_messagesByTopic.TryGetValue(message.TopicName, out var topicMessages))
+        {
+            return false;
+        }
+
+        var removedMessage = message;
+        var removed = topicMessages.Remove(removedMessage);
         if (!removed)
         {
-            var existing = topicMessages.FirstOrDefault(message => message.Id == selectedMessage.Id);
+            var existing = topicMessages.FirstOrDefault(candidate => candidate.Id == message.Id);
             if (existing is not null)
             {
+                removedMessage = existing;
                 removed = topicMessages.Remove(existing);
             }
         }
 
         if (!removed)
         {
-            return;
+            return false;
         }
 
+        removedMessage.PropertyChanged -= OnMessagePropertyChanged;
         TotalReceivedCount = Math.Max(0, TotalReceivedCount - 1);
-        AllMessages.Remove(selectedMessage);
+        AllMessages.Remove(removedMessage);
 
-        if (SelectedTopic?.TopicName == selectedMessage.TopicName)
+        if (SelectedTopic?.TopicName == removedMessage.TopicName)
         {
-            CurrentTopicMessages.Remove(selectedMessage);
-            OnPropertyChanged(nameof(SelectedTopicMessageCount));
-            OnPropertyChanged(nameof(SelectedTopicMessageCountText));
+            CurrentTopicMessages.Remove(removedMessage);
         }
 
-        if (_topicByName.TryGetValue(selectedMessage.TopicName, out var topicSummary))
+        if (_topicByName.TryGetValue(removedMessage.TopicName, out var topicSummary))
         {
             if (topicMessages.Count == 0)
             {
-                if (SelectedTopic?.TopicName == selectedMessage.TopicName)
+                if (SelectedTopic?.TopicName == removedMessage.TopicName)
                 {
                     topicSummary.MessageCount = 0;
                     topicSummary.LastReceivedAt = null;
                 }
                 else
                 {
-                    _messagesByTopic.Remove(selectedMessage.TopicName);
-                    _topicByName.Remove(selectedMessage.TopicName);
+                    _messagesByTopic.Remove(removedMessage.TopicName);
+                    _topicByName.Remove(removedMessage.TopicName);
                     Topics.Remove(topicSummary);
 
-                    if (_highlightByTopic.Remove(selectedMessage.TopicName, out var tokenSource))
+                    if (_highlightByTopic.Remove(removedMessage.TopicName, out var tokenSource))
                     {
                         tokenSource.Cancel();
                         tokenSource.Dispose();
@@ -1559,13 +1776,24 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             }
         }
 
-        SelectedMessage = null;
-        SelectedMessageDiffLines.Clear();
-        SelectedMessageDiffSummary = T("StatusNoMessageSelected");
+        if (SelectedMessage?.Id == removedMessage.Id)
+        {
+            SelectedMessage = null;
+            SelectedMessageDiffLines.Clear();
+            SelectedMessageDiffSummary = T("StatusNoMessageSelected");
+        }
+
+        return true;
+    }
+
+    private void FinishMessageRemoval()
+    {
         RecalculateLastReceivedAt();
         TopicsView.Refresh();
         RebuildAllMessageFilterOptions();
-        StatusText = T("StatusClearedMessage");
+        OnPropertyChanged(nameof(SelectedTopicMessageCount));
+        OnPropertyChanged(nameof(SelectedTopicMessageCountText));
+        OnSelectedMessagesChanged();
         UpdateCommandState();
     }
 
@@ -1578,6 +1806,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
 
         _highlightByTopic.Clear();
+        foreach (var message in AllMessages)
+        {
+            message.PropertyChanged -= OnMessagePropertyChanged;
+        }
+
         _messagesByTopic.Clear();
         _topicByName.Clear();
         Topics.Clear();
@@ -1593,6 +1826,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         LastReceivedAt = null;
         AllMessagesFilterText = string.Empty;
         RebuildAllMessageFilterOptions();
+        OnSelectedMessagesChanged();
     }
 
     private static async Task<List<ReceivedMessage>> LoadMessagesFromFileAsync(string filePath)
@@ -1791,11 +2025,37 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         StatusText = TF("StatusExported", messages.Count, dialog.FileName);
     }
 
+    private async Task PublishAsync()
+    {
+        if (!CanPublish())
+        {
+            StatusText = T("StatusPublishTopicRequired");
+            return;
+        }
+
+        try
+        {
+            await _mqttMonitorService.PublishAsync(
+                PublishTopic.Trim(),
+                PublishPayload,
+                int.TryParse(SelectedPublishQos, out var qos) ? qos : 0,
+                PublishRetain);
+
+            IsPublishDialogOpen = false;
+            StatusText = TF("StatusPublished", PublishTopic.Trim());
+        }
+        catch (Exception ex)
+        {
+            StatusText = TF("StatusPublishFailed", ex.Message);
+        }
+    }
+
     private IEnumerable<ReceivedMessage> GetMessagesForExport()
     {
         return SelectedExportScope switch
         {
             "SelectedMessage" when SelectedMessage is not null => [SelectedMessage],
+            "SelectedMessages" => AllMessages.Where(message => message.IsSelected).OrderBy(message => message.ReceivedAt),
             "SelectedTopic" when SelectedTopic is not null && _messagesByTopic.TryGetValue(SelectedTopic.TopicName, out var topicMessages) => topicMessages,
             "FilteredAllMessages" => AllMessagesView.Cast<ReceivedMessage>(),
             _ => AllMessages.OrderBy(message => message.ReceivedAt)
@@ -1812,8 +2072,12 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         ClearAllCommand.RaiseCanExecuteChanged();
         ClearSelectedTopicCommand.RaiseCanExecuteChanged();
         ClearSelectedMessageCommand.RaiseCanExecuteChanged();
+        ClearSelectedMessagesCommand.RaiseCanExecuteChanged();
+        ClearMessageSelectionCommand.RaiseCanExecuteChanged();
         ClearAllMessagesFilterCommand.RaiseCanExecuteChanged();
+        OpenPublishDialogCommand.RaiseCanExecuteChanged();
         ExportCommand.RaiseCanExecuteChanged();
+        PublishCommand.RaiseCanExecuteChanged();
         CopyRawCommand.RaiseCanExecuteChanged();
         CopyPrettyCommand.RaiseCanExecuteChanged();
         CopyFullCommand.RaiseCanExecuteChanged();
@@ -1832,6 +2096,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             tokenSource.Cancel();
             tokenSource.Dispose();
+        }
+
+        foreach (var message in AllMessages)
+        {
+            message.PropertyChanged -= OnMessagePropertyChanged;
         }
 
         _highlightByTopic.Clear();

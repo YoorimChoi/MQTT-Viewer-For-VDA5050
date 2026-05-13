@@ -1,8 +1,12 @@
+using System.Text.Json.Serialization;
+using MqttViewer.Infrastructure;
+
 namespace MqttViewer.Models;
 
-public sealed class ReceivedMessage
+public sealed class ReceivedMessage : ObservableObject
 {
     private static readonly string[] KnownVdaGroups = ["order", "state", "instantActions", "connection", "visualization", "factsheet", "zoneSet", "responses"];
+    private bool _isSelected;
 
     public Guid Id { get; init; } = Guid.NewGuid();
 
@@ -21,6 +25,13 @@ public sealed class ReceivedMessage
     public string? PayloadPrettyJson { get; init; }
 
     public bool IsJson { get; init; }
+
+    [JsonIgnore]
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set => SetProperty(ref _isSelected, value);
+    }
 
     public string VehicleKey => GuessVehicleKey(TopicName);
 

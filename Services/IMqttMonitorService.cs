@@ -15,4 +15,6 @@ public interface IMqttMonitorService : IDisposable
     Task ConnectAsync(ConnectionSettings settings, CancellationToken cancellationToken = default);
 
     Task DisconnectAsync(CancellationToken cancellationToken = default);
+
+    Task PublishAsync(string topic, string payload, int qos, bool retain, CancellationToken cancellationToken = default);
 }

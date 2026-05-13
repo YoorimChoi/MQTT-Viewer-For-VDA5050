@@ -139,6 +139,28 @@ public sealed class MqttMonitorService : IMqttMonitorService
         }
     }
 
+    public async Task PublishAsync(string topic, string payload, int qos, bool retain, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(topic))
+        {
+            throw new ArgumentException("Topic is required.", nameof(topic));
+        }
+
+        if (!_client.IsConnected)
+        {
+            throw new InvalidOperationException("MQTT client is not connected.");
+        }
+
+        var message = new MqttApplicationMessageBuilder()
+            .WithTopic(topic)
+            .WithPayload(payload ?? string.Empty)
+            .WithQualityOfServiceLevel((MqttQualityOfServiceLevel)Math.Clamp(qos, 0, 2))
+            .WithRetainFlag(retain)
+            .Build();
+
+        await _client.PublishAsync(message, cancellationToken);
+    }
+
     private void SetStatus(ConnectionStatus status)
     {
         _status = status;
