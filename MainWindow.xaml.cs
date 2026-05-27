@@ -4,7 +4,9 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
+using System.Windows.Input;
 using System.Windows.Media;
+using MqttViewer.Models;
 using MqttViewer.Services;
 using MqttViewer.ViewModels;
 
@@ -48,6 +50,18 @@ public partial class MainWindow : Window
         {
             _viewModel.UpdatePassword(passwordBox.Password);
         }
+    }
+
+    private void MessageSelectionCheckBox_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CheckBox checkBox || checkBox.DataContext is not ReceivedMessage message)
+        {
+            return;
+        }
+
+        var isSelected = checkBox.IsChecked == true;
+        var useRangeSelection = (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift;
+        _viewModel.UpdateMessageSelection(message, isSelected, useRangeSelection);
     }
 
     private void OnClosed(object? sender, EventArgs e)

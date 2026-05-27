@@ -1054,7 +1054,7 @@
             <materialDesign:Card Grid.Column="1"
                                  Margin="0,0,12,0"
                                  Padding="16">
-                <TabControl>
+                <TabControl SelectedIndex="{Binding SelectedMessageTabIndex, Mode=TwoWay}">
                     <TabItem Header="{Binding Localizer[SelectedTopicTab]}">
                         <Grid Margin="0,14,0,0">
                             <Grid.RowDefinitions>
@@ -1144,11 +1144,21 @@
                                 </DataGrid.Resources>
                                 <DataGrid.Columns>
                                     <DataGridTemplateColumn Width="{Binding Data.SelectionColumnWidth, Source={StaticResource ViewModelProxy}}">
+                                        <DataGridTemplateColumn.HeaderTemplate>
+                                            <DataTemplate>
+                                                <CheckBox HorizontalAlignment="Center"
+                                                          VerticalAlignment="Center"
+                                                          IsChecked="{Binding Data.AreAllSelectableMessagesSelected, Source={StaticResource ViewModelProxy}, Mode=TwoWay}"
+                                                          ToolTip="{Binding Data.Localizer[SelectAll], Source={StaticResource ViewModelProxy}}"
+                                                          Visibility="{Binding Data.IsSelectionMode, Source={StaticResource ViewModelProxy}, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.HeaderTemplate>
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <Grid HorizontalAlignment="Center"
                                                       VerticalAlignment="Center">
                                                     <CheckBox Style="{StaticResource MessageGridCheckBoxStyle}"
+                                                              Click="MessageSelectionCheckBox_OnClick"
                                                               IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                               Visibility="{Binding DataContext.IsSelectionMode, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                                 </Grid>
@@ -1368,11 +1378,21 @@
                                 </DataGrid.Resources>
                                 <DataGrid.Columns>
                                     <DataGridTemplateColumn Width="{Binding Data.SelectionColumnWidth, Source={StaticResource ViewModelProxy}}">
+                                        <DataGridTemplateColumn.HeaderTemplate>
+                                            <DataTemplate>
+                                                <CheckBox HorizontalAlignment="Center"
+                                                          VerticalAlignment="Center"
+                                                          IsChecked="{Binding Data.AreAllSelectableMessagesSelected, Source={StaticResource ViewModelProxy}, Mode=TwoWay}"
+                                                          ToolTip="{Binding Data.Localizer[SelectAll], Source={StaticResource ViewModelProxy}}"
+                                                          Visibility="{Binding Data.IsSelectionMode, Source={StaticResource ViewModelProxy}, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.HeaderTemplate>
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <Grid HorizontalAlignment="Center"
                                                       VerticalAlignment="Center">
                                                     <CheckBox Style="{StaticResource MessageGridCheckBoxStyle}"
+                                                              Click="MessageSelectionCheckBox_OnClick"
                                                               IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                               Visibility="{Binding DataContext.IsSelectionMode, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                                 </Grid>

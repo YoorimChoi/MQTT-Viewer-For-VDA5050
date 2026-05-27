@@ -29,12 +29,14 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private TopicSummary? _selectedTopic;
     private ReceivedMessage? _selectedMessage;
+    private ReceivedMessage? _selectionAnchorMessage;
     private string _topicSearchText = string.Empty;
     private string _jsonSearchText = string.Empty;
     private string _selectedTopicSortMode = "TopicNameAsc";
     private string _selectedTopicGroupMode = "Vehicle";
     private string _selectedMessageSortMode = "NewestFirst";
     private string _selectedExportScope = "AllTopics";
+    private int _selectedMessageTabIndex;
     private string _allMessagesFilterText = string.Empty;
     private bool _isVehicleFilterPopupOpen;
     private bool _isMessageTypeFilterPopupOpen;
@@ -128,6 +130,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         ClearSelectedTopicCommand = new RelayCommand(ClearSelectedTopicMessages, () => SelectedTopic is not null);
         ClearSelectedMessageCommand = new RelayCommand(ClearSelectedMessage, () => SelectedMessage is not null);
         ClearSelectedMessagesCommand = new RelayCommand(ClearSelectedMessages, HasSelectedMessages);
+        SelectAllMessagesCommand = new RelayCommand(SelectAllMessages, CanSelectAllMessages);
         ClearMessageSelectionCommand = new RelayCommand(ClearMessageSelection, HasSelectedMessages);
         ClearAllMessagesFilterCommand = new RelayCommand(ClearAllMessagesFilter, HasAnyAllMessagesFilter);
         ToggleVehicleFilterPopupCommand = new RelayCommand(() => IsVehicleFilterPopupOpen = !IsVehicleFilterPopupOpen);
@@ -199,9 +202,15 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             }
 
             RebuildCurrentTopicMessages();
+            if (SelectedTopic is not null)
+            {
+                SelectedMessageTabIndex = 0;
+            }
+
             OnPropertyChanged(nameof(SelectedTopicMessageCount));
             OnPropertyChanged(nameof(SelectedTopicMessageCountText));
             OnPropertyChanged(nameof(SelectedTopicDisplayText));
+            OnPropertyChanged(nameof(AreAllSelectableMessagesSelected));
             UpdateCommandState();
         }
     }
@@ -309,6 +318,21 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
+    public int SelectedMessageTabIndex
+    {
+        get => _selectedMessageTabIndex;
+        set
+        {
+            if (!SetProperty(ref _selectedMessageTabIndex, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(AreAllSelectableMessagesSelected));
+            UpdateCommandState();
+        }
+    }
+
     public bool IsSelectionMode
     {
         get => _isSelectionMode;
@@ -325,8 +349,19 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             }
 
             OnPropertyChanged(nameof(SelectionColumnWidth));
+            OnPropertyChanged(nameof(AreAllSelectableMessagesSelected));
             UpdateCommandState();
         }
+    }
+
+    public bool AreAllSelectableMessagesSelected
+    {
+        get
+        {
+            var messages = GetSelectableMessages().ToList();
+            return messages.Count > 0 && messages.All(message => message.IsSelected);
+        }
+        set => SetSelectableMessages(value);
     }
 
     public bool IsPublishDialogOpen
@@ -588,6 +623,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     public RelayCommand ClearSelectedMessageCommand { get; }
 
     public RelayCommand ClearSelectedMessagesCommand { get; }
+
+    public RelayCommand SelectAllMessagesCommand { get; }
 
     public RelayCommand ClearMessageSelectionCommand { get; }
 
@@ -982,6 +1019,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     {
         OnPropertyChanged(nameof(SelectedMessagesCount));
         OnPropertyChanged(nameof(SelectedMessagesCountText));
+        OnPropertyChanged(nameof(AreAllSelectableMessagesSelected));
         ClearSelectedMessagesCommand.RaiseCanExecuteChanged();
         ClearMessageSelectionCommand.RaiseCanExecuteChanged();
         ExportCommand.RaiseCanExecuteChanged();
@@ -1517,6 +1555,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(AllMessagesFilteredCount));
         OnPropertyChanged(nameof(AllMessagesResultCountText));
         OnPropertyChanged(nameof(AllMessagesFilteredCountText));
+        OnPropertyChanged(nameof(AreAllSelectableMessagesSelected));
         OnPropertyChanged(nameof(VehicleFilterSummary));
         OnPropertyChanged(nameof(MessageTypeFilterSummary));
         ClearAllMessagesFilterCommand.RaiseCanExecuteChanged();
@@ -1704,15 +1743,71 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         StatusText = TF("StatusClearedSelectedMessages", removedCount);
     }
 
+    private void SelectAllMessages()
+    {
+        SetSelectableMessages(true);
+    }
+
+    public void UpdateMessageSelection(ReceivedMessage message, bool isSelected, bool useRangeSelection)
+    {
+        if (useRangeSelection && _selectionAnchorMessage is not null)
+        {
+            var visibleMessages = GetSelectableMessages().ToList();
+            var anchorIndex = visibleMessages.FindIndex(candidate => candidate.Id == _selectionAnchorMessage.Id);
+            var currentIndex = visibleMessages.FindIndex(candidate => candidate.Id == message.Id);
+
+            if (anchorIndex >= 0 && currentIndex >= 0)
+            {
+                var start = Math.Min(anchorIndex, currentIndex);
+                var end = Math.Max(anchorIndex, currentIndex);
+                for (var index = start; index <= end; index++)
+                {
+                    visibleMessages[index].IsSelected = isSelected;
+                }
+            }
+            else
+            {
+                message.IsSelected = isSelected;
+            }
+        }
+        else
+        {
+            message.IsSelected = isSelected;
+        }
+
+        _selectionAnchorMessage = message;
+    }
+
     private void ClearMessageSelection()
     {
         foreach (var message in AllMessages.Where(message => message.IsSelected).ToList())
         {
             message.IsSelected = false;
         }
+
+        _selectionAnchorMessage = null;
     }
 
     private bool HasSelectedMessages() => IsSelectionMode && SelectedMessagesCount > 0;
+
+    private bool CanSelectAllMessages() => IsSelectionMode && GetSelectableMessages().Any(message => !message.IsSelected);
+
+    private IEnumerable<ReceivedMessage> GetSelectableMessages()
+    {
+        return SelectedMessageTabIndex == 0
+            ? MessagesView.Cast<ReceivedMessage>()
+            : AllMessagesView.Cast<ReceivedMessage>();
+    }
+
+    private void SetSelectableMessages(bool isSelected)
+    {
+        foreach (var message in GetSelectableMessages())
+        {
+            message.IsSelected = isSelected;
+        }
+
+        OnPropertyChanged(nameof(AreAllSelectableMessagesSelected));
+    }
 
     private bool RemoveMessageFromSession(ReceivedMessage message)
     {
@@ -2073,6 +2168,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         ClearSelectedTopicCommand.RaiseCanExecuteChanged();
         ClearSelectedMessageCommand.RaiseCanExecuteChanged();
         ClearSelectedMessagesCommand.RaiseCanExecuteChanged();
+        SelectAllMessagesCommand.RaiseCanExecuteChanged();
         ClearMessageSelectionCommand.RaiseCanExecuteChanged();
         ClearAllMessagesFilterCommand.RaiseCanExecuteChanged();
         OpenPublishDialogCommand.RaiseCanExecuteChanged();
