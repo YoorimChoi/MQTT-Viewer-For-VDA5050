@@ -1721,6 +1721,29 @@
                 </StackPanel>
                 <StackPanel Orientation="Horizontal"
                             HorizontalAlignment="Right">
+                    <TextBlock Margin="0,0,6,0"
+                               VerticalAlignment="Center"
+                               Text="{Binding Localizer[MaxMessagesLabel]}"
+                               ToolTip="{Binding Localizer[MaxMessagesTooltip]}" />
+                    <TextBox Width="72"
+                             Margin="0,0,6,0"
+                             VerticalAlignment="Center"
+                             VerticalContentAlignment="Center"
+                             TextAlignment="Right"
+                             ToolTip="{Binding Localizer[MaxMessagesTooltip]}"
+                             Text="{Binding MaxMessagesInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, FallbackValue=10000}" />
+                    <Button Margin="0,0,16,0"
+                            Padding="10,2"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource MaterialDesignOutlinedButton}"
+                            Content="{Binding Localizer[ApplyMaxMessages]}"
+                            ToolTip="{Binding Localizer[MaxMessagesTooltip]}"
+                            Command="{Binding ApplyMaxMessagesCommand}" />
+                    <CheckBox Margin="0,0,16,0"
+                              VerticalAlignment="Center"
+                              Content="{Binding Localizer[ArchiveTrimmedLabel]}"
+                              ToolTip="{Binding Localizer[ArchiveTrimmedTooltip]}"
+                              IsChecked="{Binding IsTrimArchiveEnabled, Mode=TwoWay}" />
                     <TextBlock Margin="0,0,16,0"
                                Text="{Binding TotalReceivedCountText}" />
                     <TextBlock Margin="0,0,16,0"

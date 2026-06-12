@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
@@ -26,6 +27,13 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     private readonly List<JsonTreeNode> _rawJsonTreeNodes = [];
     private readonly HashSet<string> _selectedVehicleFilters = new(StringComparer.Ordinal);
     private readonly HashSet<string> _selectedMessageTypeFilters = new(StringComparer.Ordinal);
+
+    private int _maxMessages = 10_000;
+    private int _maxMessagesInput = 10_000;
+    private readonly ConcurrentQueue<ReceivedMessage> _incomingQueue = new();
+    private readonly DispatcherTimer _flushTimer;
+    private readonly object _archiveLock = new();
+    private bool _isTrimArchiveEnabled = true;
 
     private TopicSummary? _selectedTopic;
     private ReceivedMessage? _selectedMessage;
@@ -133,6 +141,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         SelectAllMessagesCommand = new RelayCommand(SelectAllMessages, CanSelectAllMessages);
         ClearMessageSelectionCommand = new RelayCommand(ClearMessageSelection, HasSelectedMessages);
         ClearAllMessagesFilterCommand = new RelayCommand(ClearAllMessagesFilter, HasAnyAllMessagesFilter);
+        ApplyMaxMessagesCommand = new RelayCommand(ApplyMaxMessages, CanApplyMaxMessages);
         ToggleVehicleFilterPopupCommand = new RelayCommand(() => IsVehicleFilterPopupOpen = !IsVehicleFilterPopupOpen);
         ToggleMessageTypeFilterPopupCommand = new RelayCommand(() => IsMessageTypeFilterPopupOpen = !IsMessageTypeFilterPopupOpen);
         OpenPublishDialogCommand = new RelayCommand(OpenPublishDialog, CanOpenPublishDialog);
@@ -150,6 +159,13 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         _mqttMonitorService.MessageReceived += OnMessageReceived;
         Localizer.PropertyChanged += OnLocalizerPropertyChanged;
 
+        _flushTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(150)
+        };
+        _flushTimer.Tick += OnFlushTick;
+        _flushTimer.Start();
+
         SessionSourceText = T("NoBrokerConnected");
         StatusText = T("StatusDisconnected");
         SelectedMessageDiffSummary = T("StatusNoMessageSelected");
@@ -158,6 +174,32 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
     public AppLocalizer Localizer { get; }
 
     public ConnectionSettings ConnectionSettings { get; }
+
+    public bool IsTrimArchiveEnabled
+    {
+        get => _isTrimArchiveEnabled;
+        set => SetProperty(ref _isTrimArchiveEnabled, value);
+    }
+
+    /// <summary>The active cap enforced by trimming. Only changed via <see cref="ApplyMaxMessages"/>.</summary>
+    public int MaxMessages
+    {
+        get => _maxMessages;
+        private set => SetProperty(ref _maxMessages, value);
+    }
+
+    /// <summary>The pending value typed in the UI; applied explicitly via the Apply button.</summary>
+    public int MaxMessagesInput
+    {
+        get => _maxMessagesInput;
+        set
+        {
+            if (SetProperty(ref _maxMessagesInput, value))
+            {
+                ApplyMaxMessagesCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
 
     public ObservableCollection<TopicSummary> Topics { get; }
 
@@ -630,6 +672,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public RelayCommand ClearAllMessagesFilterCommand { get; }
 
+    public RelayCommand ApplyMaxMessagesCommand { get; }
+
     public RelayCommand ToggleVehicleFilterPopupCommand { get; }
 
     public RelayCommand ToggleMessageTypeFilterPopupCommand { get; }
@@ -800,7 +844,7 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         var dialog = new OpenFileDialog
         {
             Filter = "Supported files (*.jsonl;*.json;*.txt)|*.jsonl;*.json;*.txt|JSON Lines (*.jsonl)|*.jsonl|JSON (*.json)|*.json|Text (*.txt)|*.txt",
-            Multiselect = false,
+            Multiselect = true,
             CheckFileExists = true
         };
 
@@ -810,6 +854,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             return;
         }
 
+        var fileNames = dialog.FileNames;
+
         try
         {
             if (_mqttMonitorService.IsConnected)
@@ -817,20 +863,100 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
                 await _mqttMonitorService.DisconnectAsync();
             }
 
-            var importedMessages = await LoadMessagesFromFileAsync(dialog.FileName);
+            // Merge every selected file, de-duplicating by message Id (batch-split
+            // archives never overlap, but re-selecting overlapping exports might).
+            var importedMessages = new List<ReceivedMessage>();
+            var seenIds = new HashSet<Guid>();
+            var failedFiles = new List<string>();
+
+            foreach (var fileName in fileNames)
+            {
+                try
+                {
+                    foreach (var message in await LoadMessagesFromFileAsync(fileName))
+                    {
+                        if (seenIds.Add(message.Id))
+                        {
+                            importedMessages.Add(message);
+                        }
+                    }
+                }
+                catch
+                {
+                    failedFiles.Add(Path.GetFileName(fileName));
+                }
+            }
+
+            // Order chronologically so per-topic lists (and diff-with-previous) stay
+            // correct even when files are selected out of order. OrderBy is stable.
+            importedMessages = importedMessages.OrderBy(message => message.ReceivedAt).ToList();
+
+            // Let the user narrow the import to a time window (prefilled with the
+            // full range of the selected files). Cancelling aborts without touching
+            // the current session.
+            var totalLoaded = importedMessages.Count;
+            var rangeApplied = false;
+
+            if (totalLoaded > 0)
+            {
+                var rangeDialog = new ImportTimeRangeDialog(
+                    importedMessages[0].ReceivedAt,
+                    importedMessages[^1].ReceivedAt,
+                    totalLoaded)
+                {
+                    Owner = Application.Current.MainWindow
+                };
+
+                if (rangeDialog.ShowDialog() != true)
+                {
+                    StatusText = T("StatusImportCanceled");
+                    return;
+                }
+
+                var rangeStart = rangeDialog.RangeStart;
+                var rangeEnd = rangeDialog.RangeEnd;
+                var filtered = importedMessages
+                    .Where(message => message.ReceivedAt >= rangeStart && message.ReceivedAt <= rangeEnd)
+                    .ToList();
+
+                rangeApplied = filtered.Count != totalLoaded;
+                importedMessages = filtered;
+            }
 
             ResetLoadedData();
             IsImportedSession = true;
-            SessionSourceText = Path.GetFileName(dialog.FileName);
+            SessionSourceText = fileNames.Length == 1
+                ? Path.GetFileName(fileNames[0])
+                : TF("ImportedMultipleFiles", fileNames.Length);
 
             foreach (var message in importedMessages)
             {
-                AddMessageToSession(message, highlightTopic: false, updateStatus: false);
+                AddMessageToSession(message, highlightTopic: false, updateStatus: false, deferViewRefresh: true);
             }
 
+            // Imported messages are not trimmed/archived: the source file already holds them.
+            // RebuildAllMessageFilterOptions() refreshes the AllMessages view internally.
+            RebuildAllMessageFilterOptions();
             TopicsView.Refresh();
             SelectedTopic = Topics.FirstOrDefault();
-            StatusText = TF("StatusImportedCount", importedMessages.Count, dialog.FileName);
+
+            if (failedFiles.Count > 0)
+            {
+                StatusText = TF("StatusImportedCountWithErrors", importedMessages.Count, fileNames.Length, string.Join(", ", failedFiles));
+            }
+            else if (rangeApplied)
+            {
+                StatusText = TF("StatusImportedRange", importedMessages.Count, totalLoaded);
+            }
+            else if (fileNames.Length == 1)
+            {
+                StatusText = TF("StatusImportedCount", importedMessages.Count, fileNames[0]);
+            }
+            else
+            {
+                StatusText = TF("StatusImportedCountMulti", importedMessages.Count, fileNames.Length);
+            }
+
             UpdateCommandState();
         }
         catch (Exception ex)
@@ -926,15 +1052,18 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void OnMessageReceived(object? sender, IncomingMqttMessage incoming)
     {
-        _dispatcher.Invoke(() => AddIncomingMessageCore(incoming));
+        // Build the message off the UI thread (JSON parsing included) and queue it.
+        // A DispatcherTimer flushes the queue in batches so high message rates don't
+        // overwhelm the UI thread with per-message view refreshes.
+        _incomingQueue.Enqueue(BuildReceivedMessage(incoming));
     }
 
-    private void AddIncomingMessageCore(IncomingMqttMessage incoming)
+    private static ReceivedMessage BuildReceivedMessage(IncomingMqttMessage incoming)
     {
         var payload = incoming.Payload ?? string.Empty;
         var (isJson, prettyJson) = TryPrettyJson(payload);
 
-        var message = new ReceivedMessage
+        return new ReceivedMessage
         {
             TopicName = incoming.Topic ?? string.Empty,
             ReceivedAt = incoming.ReceivedAt,
@@ -945,11 +1074,55 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             PayloadPrettyJson = prettyJson,
             IsJson = isJson
         };
-
-        AddMessageToSession(message, highlightTopic: true, updateStatus: true);
     }
 
-    private void AddMessageToSession(ReceivedMessage message, bool highlightTopic, bool updateStatus)
+    private void OnFlushTick(object? sender, EventArgs e)
+    {
+        ReceivedMessage? lastMessage = null;
+        var addedCount = 0;
+        var touchedTopics = new HashSet<string>(StringComparer.Ordinal);
+
+        while (_incomingQueue.TryDequeue(out var message))
+        {
+            AddMessageToSession(message, highlightTopic: false, updateStatus: false, deferViewRefresh: true);
+            touchedTopics.Add(message.TopicName);
+            lastMessage = message;
+            addedCount++;
+        }
+
+        if (addedCount == 0)
+        {
+            return;
+        }
+
+        var trimmedCount = TrimToCapacity();
+
+        // Highlight each touched topic once per batch (skip topics trimmed away).
+        foreach (var topicName in touchedTopics)
+        {
+            if (_topicByName.TryGetValue(topicName, out var topicSummary))
+            {
+                TriggerTopicHighlight(topicSummary);
+            }
+        }
+
+        // Run the heavy per-view work once per batch instead of once per message.
+        // RebuildAllMessageFilterOptions() refreshes the AllMessages view internally.
+        RebuildAllMessageFilterOptions();
+        TopicsView.Refresh();
+        UpdateCommandState();
+
+        if (trimmedCount > 0)
+        {
+            StatusText = TF("StatusTrimmedOldest", trimmedCount);
+        }
+        else if (lastMessage is not null)
+        {
+            StatusText = TF("StatusLastMessage", lastMessage.TopicName, lastMessage.ReceivedAt);
+        }
+    }
+
+    private void AddMessageToSession(ReceivedMessage message, bool highlightTopic, bool updateStatus, bool deferViewRefresh = false)
     {
         message.PropertyChanged += OnMessagePropertyChanged;
 
@@ -961,7 +1134,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         messageList.Add(message);
         AllMessages.Add(message);
-        RebuildAllMessageFilterOptions();
+
+        if (!deferViewRefresh)
+        {
+            RebuildAllMessageFilterOptions();
+        }
 
         if (!_topicByName.TryGetValue(message.TopicName, out var topicSummary))
         {
@@ -987,7 +1164,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         TotalReceivedCount += 1;
         LastReceivedAt = message.ReceivedAt;
-        RefreshAllMessagesViewState();
+
+        if (!deferViewRefresh)
+        {
+            RefreshAllMessagesViewState();
+        }
 
         if (updateStatus)
         {
@@ -1001,8 +1182,11 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(SelectedTopicMessageCountText));
         }
 
-        TopicsView.Refresh();
-        UpdateCommandState();
+        if (!deferViewRefresh)
+        {
+            TopicsView.Refresh();
+            UpdateCommandState();
+        }
     }
 
     private void OnMessagePropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -1892,6 +2076,106 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         UpdateCommandState();
     }
 
+    /// <summary>
+    /// Enforces the global message cap by dropping the oldest messages once the
+    /// session exceeds <see cref="MaxMessages"/>. Dropped messages are archived to
+    /// disk (when enabled) before removal. Returns the number of messages trimmed.
+    /// Callers are responsible for refreshing the views afterwards.
+    /// </summary>
+    private int TrimToCapacity()
+    {
+        var excess = AllMessages.Count - MaxMessages;
+        if (excess <= 0)
+        {
+            return 0;
+        }
+
+        // AllMessages is appended in receive order, so the front is the oldest.
+        var victims = AllMessages.Take(excess).ToList();
+        ArchiveMessages(victims);
+
+        foreach (var message in victims)
+        {
+            RemoveMessageFromSession(message);
+        }
+
+        return victims.Count;
+    }
+
+    private bool CanApplyMaxMessages() => MaxMessagesInput >= 1 && MaxMessagesInput != MaxMessages;
+
+    private void ApplyMaxMessages()
+    {
+        var newCap = Math.Max(1, MaxMessagesInput);
+        var trimCount = AllMessages.Count - newCap;
+
+        // Trimming is destructive, so confirm before dropping anything.
+        if (trimCount > 0)
+        {
+            var note = IsTrimArchiveEnabled ? T("ConfirmTrimArchivedNote") : T("ConfirmTrimDiscardedNote");
+            if (!ConfirmSessionChange(T("ConfirmTrimTitle"), TF("ConfirmTrimMessage", newCap, trimCount, note)))
+            {
+                MaxMessagesInput = MaxMessages; // revert the text box
+                StatusText = T("StatusMaxMessagesCanceled");
+                return;
+            }
+        }
+
+        MaxMessages = newCap;
+        MaxMessagesInput = newCap; // normalize (clamped value reflected back)
+
+        var trimmed = TrimToCapacity();
+        if (trimmed > 0)
+        {
+            RebuildAllMessageFilterOptions();
+            TopicsView.Refresh();
+            UpdateCommandState();
+            StatusText = TF("StatusTrimmedOldest", trimmed);
+        }
+        else
+        {
+            StatusText = TF("StatusMaxMessagesSet", newCap);
+        }
+
+        ApplyMaxMessagesCommand.RaiseCanExecuteChanged();
+    }
+
+    private void ArchiveMessages(IReadOnlyList<ReceivedMessage> messages)
+    {
+        if (!IsTrimArchiveEnabled || messages.Count == 0)
+        {
+            return;
+        }
+
+        // Serialize on the UI thread (same JSONL schema as Export), write off-thread.
+        var lines = messages.Select(message => JsonSerializer.Serialize(message)).ToArray();
+        var path = GetArchiveFilePath();
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                lock (_archiveLock)
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                    File.AppendAllLines(path, lines, Encoding.UTF8);
+                }
+            }
+            catch (Exception ex)
+            {
+                _dispatcher.BeginInvoke(() => StatusText = TF("StatusArchiveFailed", ex.Message));
+            }
+        });
+    }
+
+    private static string GetArchiveFilePath()
+    {
+        // Archive into a "log" folder next to the running executable.
+        // One file per day; File.AppendAllLines keeps appending (never overwrites).
+        var directory = Path.Combine(AppContext.BaseDirectory, "log");
+        return Path.Combine(directory, $"trimmed-{DateTime.Now:yyyyMMdd}.jsonl");
+    }
+
     private void ResetLoadedData()
     {
         foreach (var tokenSource in _highlightByTopic.Values)
@@ -2183,6 +2467,8 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        _flushTimer.Stop();
+        _flushTimer.Tick -= OnFlushTick;
         Localizer.PropertyChanged -= OnLocalizerPropertyChanged;
         _mqttMonitorService.ConnectionStatusChanged -= OnConnectionStatusChanged;
         _mqttMonitorService.ConnectionErrorOccurred -= OnConnectionErrorOccurred;
