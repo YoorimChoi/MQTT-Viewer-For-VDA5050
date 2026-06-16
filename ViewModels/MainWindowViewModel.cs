@@ -2168,12 +2168,38 @@ public sealed class MainWindowViewModel : ObservableObject, IDisposable
         });
     }
 
-    private static string GetArchiveFilePath()
+    private string GetArchiveFilePath()
     {
-        // Archive into a "log" folder next to the running executable.
-        // One file per day; File.AppendAllLines keeps appending (never overwrites).
-        var directory = Path.Combine(AppContext.BaseDirectory, "log");
+        // Archive into a broker-specific folder next to the running executable
+        // so retained/trimmed messages from different environments do not mix.
+        var brokerDirectoryName = GetArchiveBrokerDirectoryName();
+        var directory = Path.Combine(AppContext.BaseDirectory, "log", brokerDirectoryName);
         return Path.Combine(directory, $"trimmed-{DateTime.Now:yyyyMMdd}.jsonl");
+    }
+
+    private string GetArchiveBrokerDirectoryName()
+    {
+        var host = string.IsNullOrWhiteSpace(ConnectionSettings.Host)
+            ? "unknown-host"
+            : SanitizePathSegment(ConnectionSettings.Host.Trim());
+        var port = ConnectionSettings.Port > 0
+            ? ConnectionSettings.Port.ToString()
+            : "unknown-port";
+
+        return $"{host}_{port}";
+    }
+
+    private static string SanitizePathSegment(string value)
+    {
+        var invalidCharacters = Path.GetInvalidFileNameChars();
+        var builder = new StringBuilder(value.Length);
+
+        foreach (var character in value)
+        {
+            builder.Append(invalidCharacters.Contains(character) ? '_' : character);
+        }
+
+        return string.IsNullOrWhiteSpace(builder.ToString()) ? "unknown" : builder.ToString();
     }
 
     private void ResetLoadedData()
